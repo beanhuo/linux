@@ -151,29 +151,6 @@
 			interrupts = <0 20 4>;
 			reg = <0xe000a000 0x1000>;
 		} ;
-		nand: nand@7aa00000 {
-			compatible = "xlnx,ps7-fnand-1.00.a";
-			reg = <0x7aa00000 0x1000>;
-			xlnx,nand-width = <8>;
-			#address-cells = <1>;
-			#size-cells = <1>;
-			partition@0 {
-				label = "test0";
-				reg = <0x00000000 0x8000000>;
-			};
-			partition@1 {
-				label = "test1";
-				reg = <0x8000000 0x8000000>;
-			};
-			partition@2 {
-				label = "test2";
-				reg = <0x10000000 0x20000000>;
-			};
-			partition@3 {
-				label = "reserved";
-				reg = <0x20000000 0x40000000>;
-			};
-		};
 		ps7_iop_bus_config_0: ps7-iop-bus-config@e0200000 {
 			compatible = "xlnx,ps7-iop-bus-config-1.00.a";
 			reg = <0xe0200000 0x1000>;
@@ -194,24 +171,23 @@
 			interrupts = <0 2 4>;
 			reg = <0xf8f02000 0x1000>;
 		} ;
-		ps7_qspi_0: ps7-qspi@e000d000 {
-			clock-names = "ref_clk", "pclk";
+		ps7_qspi_0: ps7-qspi@e000d000 {  /*zynq qspi controller */
+			clock-names = "ref_clk", "aper_clk";
 			clocks = <&clkc 10>, <&clkc 43>;
 			compatible = "xlnx,zynq-qspi-1.0";
 			interrupt-parent = <&ps7_scugic_0>;
 			interrupts = <0 19 4>;
 			is-dual = <0>;
-			num-cs = <1>;
+			num-chip-select = <1>;
 			reg = <0xe000d000 0x1000>;
 			xlnx,fb-clk = <0x1>;
 			xlnx,qspi-mode = <0x0>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 			flash@0 {
-				compatible = "n25q128";
+				//compatible = "s25fl256s1";
+				compatible = "n25q128a13";
 				reg = <0x0>;
-				spi-tx-bus-width = <1>;
-				spi-rx-bus-width = <4>;
 				spi-max-frequency = <50000000>;
 				#address-cells = <1>;
 				#size-cells = <1>;
@@ -236,8 +212,67 @@
 					reg = <0xC00000 0x400000>;
 				};
 			};
+#if 0
+			flash@1 {
+				compatible = "n25q128";
+				reg = <0x0>;
+				spi-max-frequency = <50000000>;
+				#address-cells = <1>;
+				#size-cells = <1>;
+				partition@qspi-fsbl-uboot {
+					label = "env";
+					reg = <0x0 0x100000>;
+				};
+				partition@qspi-linux {
+					label = "data0";
+					reg = <0x100000 0x500000>;
+				};
+				partition@qspi-device-tree {
+					label = "data1";
+					reg = <0x600000 0x200000>;
+				};
+				partition@qspi-rootfs {
+					label = "qspi-rootfs";
+					reg = <0x800000 0x800000>;
+				};
+			};
+
+#endif
 
 		} ;
+                plspi0:zedplspi@7AA00000 { /*  pl spi beanhuo add*/
+			compatible = "zynq,zed-plspi";
+			interrupts = <0 59 4>;
+			interrupt-parent = <&ps7_scugic_0>;
+			is-dual = <0>;
+			num-chip-select = <1>;
+			reg = <0x7AA00000 0x1000>;/*<0x20000000,0x1000>;*/
+			#address-cells = <1>;
+			#size-cells = <0>;
+			flash@0 {
+                                 compatible = "n25q128a13";
+                                 reg = <0x0>;
+                                 spi-max-frequency = <50000000>;
+                                 #address-cells = <1>;
+                                 #size-cells = <1>;
+                                 partition@qspi-fsbl-uboot {
+                                         label = "env";
+                                         reg = <0x0 0x800000>;/* 8MB */
+                                 };
+                                 partition@qspi-linux {
+                                         label = "uboot";
+                                         reg = <0x800000 0x800000>;
+                                 };
+                                 partition@qspi-device-tree {
+                                         label = "kernel";
+                                         reg = <0x1000000 0x800000>;
+                                 };
+                                 partition@qspi-rootfs {
+                                         label = "user_data";
+                                         reg = <0x1800000 0x800000>;
+                                 };
+				};
+		};
 		ps7_qspi_linear_0: ps7-qspi-linear@fc000000 {
 			clock-names = "ref_clk", "aper_clk";
 			clocks = <&clkc 10>, <&clkc 43>;
@@ -269,7 +304,7 @@
 			interrupts = <1 14 0x301>;
 			reg = <0xf8f00620 0xe0>;
 		} ;
-		ps7_sd_0: ps7-sdio@e0100000 {
+		ps7_sd_0: ps7-sdio@e0100000 {       /*sd card device*/
 			clock-frequency = <50000000>;
 			clock-names = "clk_xin", "clk_ahb";
 			clocks = <&clkc 21>, <&clkc 32>;
@@ -280,6 +315,14 @@
 			xlnx,has-cd = <0x1>;
 			xlnx,has-power = <0x0>;
 			xlnx,has-wp = <0x1>;
+		} ;
+		ps7_mmc_0: ps7-plmmc@7AA00000{        /*pl MMc controller device*/
+			compatible = "xlnx,zynq-pl-mmc-1.0";
+			interrupt-parent = <&ps7_scugic_0>;
+			interrupts = <0 57 4>;
+			is-dual = <0>;
+			reg = <0x7AA00000 0x80>,<0x40400000 0x80>;
+			
 		} ;
 		ps7_slcr_0: ps7-slcr@f8000000 {
 			#address-cells = <1>;
@@ -314,9 +357,9 @@
 			reg = <0xf8001000 0x1000>;
 		} ;
 		ps7_uart_1: serial@e0001000 {
-			clock-names = "uart_clk", "pclk";
+			clock-names = "ref_clk", "aper_clk";
 			clocks = <&clkc 24>, <&clkc 41>;
-			compatible = "xlnx,xuartps", "cdns,uart-r1p8";
+			compatible = "xlnx,xuartps";
 			current-speed = <115200>;
 			device_type = "serial";
 			interrupt-parent = <&ps7_scugic_0>;
@@ -341,5 +384,6 @@
 			interrupts = <0 7 4>;
 			reg = <0xf8007100 0x20>;
 		} ;
+
 	} ;
 } ;
