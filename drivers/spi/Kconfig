@@ -597,6 +597,12 @@ config SPI_XILINX
 
 	  Or for the DS570, see "XPS Serial Peripheral Interface (SPI) (v2.00b)"
 
+config SPI_ZYNQ_ZED_PL
+        tristate "zynq zed board pl spi controller"
+        depends on ARCH_ZYNQ
+        help
+           This selects a driver for the zynq zed board pl spi controller
+
 config SPI_XTENSA_XTFPGA
 	tristate "Xtensa SPI controller for xtfpga"
 	depends on (XTENSA && XTENSA_PLATFORM_XTFPGA) || COMPILE_TEST
