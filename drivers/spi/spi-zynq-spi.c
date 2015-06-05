@@ -24,25 +24,85 @@
 #include <linux/workqueue.h>
 #include <linux/dma-mapping.h>
 
-#define	B0					0x00000001
-#define	B1					0x00000002
-#define	B2					0x00000004
-#define	B3					0x00000008
-#define	B4					0x00000010
-#define	B5					0x00000020
-#define	B6					0x00000040
-#define	B7					0x00000080
-#define	B8					0x00000100
-#define	B9					0x00000200
-#define	B10					0x00000400
-#define B16					0x00010000
-#define B24					0x01000000
-#define B25					0x02000000
-#define B26					0x04000000
-#define B28					0x10000000
-#define B31					0x80000000
+#define	B0	0x00000001
+#define	B1	0x00000002
+#define	B2	0x00000004
+#define	B3	0x00000008
+#define	B4	0x00000010
+#define	B5	0x00000020
+#define	B6	0x00000040
+#define	B7	0x00000080
+#define	B8	0x00000100
+#define	B9	0x00000200
+#define	B10	0x00000400
+#define B11	0x00000800
+#define B12	0x00001000
+#define B16	0x00010000
+#define B17	0x00020000
+#define B18	0x00040000
+#define B19	0x00080000
+#define B24	0x01000000
+#define B25	0x02000000
+#define B26	0x04000000
+#define B28	0x10000000
+#define B31	0x80000000
+
+
+
+
+/* zynq SPI controller registers */
+
+/* AXI_SLAVE_MISC   base addr 0x7AA0_0000 */
+
+#define SPI_CLK		0x00	/* SPI clock register */
+#define SPI_CFG		0x04	/* SPI configure register */
+#define SPI_BUS_WIDTH	0x08
+#define SPI_VOLTAGE	0X0c
+#define SPI_POWER_CTRL	0x10
+#define SPI_RESISTOR	0x14	/*control power loss speed resistor*/
+#define SPI_GPIO_CS	0x18	
+#define SPI_SUB_VERSION	0x78
+#define SPI_VERSION	0x7C
+
+/* AXI_SLAVE_RD    base addr 0x7AB0_0000 */
+
+#define SPI_RD_LEN	0x00	/* SPI read length register */
+#define SPI_DUMMY_CYCLE	0x04	/* SPI dummy cycle register */
+#define SPI_RD_SR	0x08	/* SPI read status register */
+#define SPI_RD_RISE_FIFO_COUNT	0x0C
+#define SPI_RD_FALL_FIFO_COUNT	0x10
+#define SPI_RD_IO_DELAY		0x14
+#define SPI_RD_DR		0x18	/* SPI read data register */
+#define SPI_RD_DMA_RISE_FIFO_COUNT	0x1C
+#define SPI_RD_DMA_FALL_FIFO_COUNT	0x20
+
+/* AXI_SLAVE_WR    base addr 0x7AC0_0000 */
+
+#define SPI_WR_LEN		0x00	/* SPI write length register */
+#define SPI_WR_SR		0x04	/* SPI write status register */
+#define SPI_WR_RISE_FIFO_COUNT	0x08
+#define SPI_WR_FALL_FIFO_COUNT	0x0C
+#define SPI_WR_DR		0x10	/* SPI write data register */
+#define SPI_WR_DMA_RISE_FIFO_COUNT	0x14
+#define SPI_WR_DMA_FALL_FIFO_COUNT	0x18
+
+/* AXI_DMA_BASE    base addr 0x4040_0000 */
+
+#define MM2S_DMACR		0x00
+#define MM2S_DMASR		0x04
+#define MM2S_SA			0x18
+#define MM2S_LENGTH		0x28
+
+#define S2MM_DMACR		0x30
+#define S2MM_DMASR		0x34
+#define S2MM_DA			0x48
+#define S2MM_LENGTH		0x58
+
 #define USING_INTERRUPTE 1
 //#define ENABLE_PRINT_DEBUG 1
+
+
+
 /*Spi mode*/
 typedef enum {
     EXTENDED=0,
@@ -55,6 +115,7 @@ u8 gcCurSpiMode;
 EXPORT_SYMBOL(gcCurSpiMode);
 void __iomem  *gRbase;
 EXPORT_SYMBOL(gRbase);
+
 u8 gcDummyBase = 0;
 u8 gcCurSpiBusWd = 0xFF;
 u8 gcCurSpiDummy = 0xFF;
@@ -64,21 +125,6 @@ u8 gcCurSpiDummy = 0xFF;
 #define DRIVER_NAME			"zynq-plspi"
 
 
-/* zynq SPI controller registers */
-#define SPIBASEADDR		0x7AA00000//0x16000000
-#define SPI_WR_LEN 		0x0	/* SPI write length register */
-#define SPI_RD_LEN 		0x4		/* SPI read length register */
-#define SPI_DUMMY_CYCLE 0x8		/* SPI dummy cycle register */
-#define SPI_CFG 			0xC		/* SPI configure register */
-#define SPI_PROTOCOL 	0x10	/* SPI protocol register */
-#define SPI_DR 			0x14	/* SPI data register */
-#define SPI_CR 			0x18	/* SPI control register */
-#define SPI_SR 			0x1C	/* SPI status register */
-#define SPI_CLK 			0x20	/* SPI clock register */
-#define SPI_DLL 			0x24	/* SPI IO delay register */
-#define SPI_CLK_DIVIDER 0x28	/* SPI clock divider register */
-#define SPI_VERSION 	0x78	/* SPI Controller Version */
-#define ZYNQ_LED_BASE	0x7C	/* Zynq led control register base*/
 /*
  * QSPI Configuration Register bit Masks
  *
@@ -237,11 +283,12 @@ enum {
 #define zynq_plspi_read(addr)		readl_relaxed(addr)
 #define zynq_plspi_write(addr, val)	writel_relaxed((val), (addr))
 
+
 #define COMMOND_wid(A)   ((A&0x0F00)>>8)
 #define ADDRESS_wid(A)   ((A&0x00f0)>>4)
 #define DATA_wid(A)      (A&0x000F)
-#define spi_StartWrite(base)  zynq_plspi_write(base+SPI_CR, zynq_plspi_read(base+SPI_CR)|B2)
-#define spi_StartRead(base)   zynq_plspi_write(base+SPI_CR, zynq_plspi_read(base+SPI_CR)|B3)
+//#define spi_StartWrite(base)  zynq_plspi_write(base+SPI_CR, zynq_plspi_read(base+SPI_CR)|B2)
+//#define spi_StartRead(base)   zynq_plspi_write(base+SPI_CR, zynq_plspi_read(base+SPI_CR)|B3)
 #if 0
 #define spi_WaitControllerReady(base) ({ \
 				do{ \
@@ -252,21 +299,31 @@ enum {
 					}while(0);  \
 				        })
 #endif
-u8 spi_WaitControllerReady(void __iomem *base) 
+u8 spi_WaitControllerReady(void __iomem *base,u32 bit,u8 loop) 
 {
 	u32 sr=0;
 	unsigned long timeo = jiffies + HZ;
-	while(!(sr&B4)){
-	 sr = zynq_plspi_read(base +SPI_SR); 
-	if (time_after(jiffies, timeo))
+
+	while(1)
 	{
-	
-         printk(KERN_WARNING "spi controller %s(): software timeout,sr [0x%x]\n", __func__,sr);
-	 return 0;
-	}
-			}
+		 sr = zynq_plspi_read(base); 
+		if (time_after(jiffies, timeo))
+		{
+	         printk("spi controller %s(): software timeout,sr [0x%x]\n", __func__,sr);
+		 return 0;
+		}
+		
+	   if(loop)
+	   	{
+	   	if(sr&bit)
+			break;
+	   	}else {
+		if (!(sr&bit))
+	   		break;
+		}
+				
        return 1;	
-	
+		}
 }
 /**
  * struct zynq_plspi - Defines qspi driver instance
@@ -295,7 +352,14 @@ struct zynq_plspi{
 	struct work_struct work;
 	struct list_head queue;
 	u8 queue_state;
-	void __iomem *regs;
+
+	void __iomem *misc_regs;
+	void __iomem *rd_regs;
+	void __iomem *wr_regs;
+	void __iomem *dma_regs;
+
+//	void __iomem *regs;
+
 	struct clk *devclk;
 	struct clk *aperclk;
 	int irq;
@@ -351,27 +415,188 @@ CommandSetTab SpecialCommandSet[] = {
     {SPI_FLASH_INS_DIFP, 0x112, 0x222, 0xfff, 0x3, 0x0, 0x0, 0xff},
     {SPI_FLASH_INS_DIEFP, 0x122, 0x222, 0xfff, 0x3, 0x0, 0x0, 0xff},
     {SPI_FLASH_INS_QIFP, 0x114, 0xfff, 0x444, 0x3, 0x0, 0xff, 0x0},
-    {SPI_FLASH_INS_QIEFP_ALT, 0x144, 0xFFF, 0x444, 0x3, 0x0, 0xFFF, 0x0},
+    {SPI_FLASH_INS_QIEFP_ALT, 0x144, 0xFFF, 0x444, 0x3, 0x0, 0xFF, 0x0},
     /*PROGRAM Operations with 4-Byte Address*/
-    {SPI_FLASH_INS_QIFP4BYTE, 0x114, 0xFFF, 0x444, 0x4, 0x0, 0xFFF, 0x0},
-    {SPI_FLASH_INS_QIEFP4BYTE, 0x144, 0xFFF, 0x444, 0x4, 0x0, 0xFFF, 0x0},
+    {SPI_FLASH_INS_QIFP4BYTE, 0x114, 0xFFF, 0x444, 0x4, 0x0, 0xFF, 0x0},
+    {SPI_FLASH_INS_QIEFP4BYTE, 0x144, 0xFFF, 0x444, 0x4, 0x0, 0xFF, 0x0},
 };
+
+
+
+#define VCC_ON          0x00000001
+#define VCC_100K_ohm    0x00000002
+#define VCC_35_ohm      0x00000004
+#define VCC_17_ohm      0x00000008
+#define VCC_08_ohm      0x00000010
+#define VCC_04_ohm      0x00000020
+
+#define VCC_MASK_ohm    0x0000003f
+
+#define VCCq_ON         0x00000100
+#define VCCq_100K_ohm   0x00000200
+#define VCCq_35_ohm     0x00000400
+#define VCCq_17_ohm     0x00000800
+#define VCCq_08_ohm     0x00001000
+#define VCCq_04_ohm     0x00002000
+
+#define VCCq_MASK_ohm   0x00003f00
+/**
+ * spi_set_cs - Select or deselect the chip select line
+ * @qspi:	Pointer to the spi_device structure
+ * @is_on:	Select(1) or deselect (0) the chip select line
+ */
+static void spi_set_cs(struct zynq_plspi *xqspi, int value)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&xqspi->config_reg_lock, flags);
+
+	writel(value, xqspi->misc_regs + SPI_GPIO_CS);
+	spin_unlock_irqrestore(&xqspi->config_reg_lock, flags);
+#ifdef ENABLE_PRINT_DEBUG
+	printk("====>set cs %d\n", value);
+#endif
+}
+
+void spi_vccq_on(struct zynq_plspi *xqspi, uint32_t mv)
+{
+	void __iomem *misc_base = xqspi->misc_regs;
+    uint32_t value;
+	uint32_t data;
+
+	//1. set voltage
+    value = mv  * 256 / 3300;
+	writel((value & 0xff) | B8, misc_base + SPI_VOLTAGE);
+	mdelay(1);
+
+	//2. turn on
+	data = readl(misc_base + SPI_POWER_CTRL);
+	data &= ~VCCq_MASK_ohm;
+	writel(data | VCCq_ON, misc_base + SPI_POWER_CTRL);
+}
+
+int spi_vccq_resistor(struct zynq_plspi *xqspi, uint32_t value)
+{
+	void __iomem *misc_base = xqspi->misc_regs;
+	uint32_t data = (value * 1024 / 100000) | 0x400;
+
+	writel(data << 16, misc_base + SPI_RESISTOR);
+   	mdelay(1);
+
+	return 0;
+}	
+
+void spi_vccq_off(struct zynq_plspi *xqspi, uint32_t speed_us)
+{
+	void __iomem *misc_base = xqspi->misc_regs;
+    uint32_t temp;
+    uint32_t resistor_value;
+
+    if(speed_us > 120) {
+        resistor_value = speed_us / 4;
+        spi_vccq_resistor(xqspi, resistor_value);
+        writel( VCC_100K_ohm |
+                VCCq_100K_ohm,
+                misc_base + SPI_POWER_CTRL);
+    }
+    else if(speed_us > 70) {
+        temp = speed_us / 4;
+        resistor_value = (temp * 35) / ( 35 - temp);
+        spi_vccq_resistor(xqspi, resistor_value);
+        writel( VCC_100K_ohm | VCC_35_ohm |
+                VCCq_100K_ohm | VCCq_35_ohm,
+                misc_base + SPI_POWER_CTRL );
+    }
+    else if(speed_us > 32) {
+        temp = speed_us / 4;
+        resistor_value = (temp * 12) / ( 12 - temp);
+        spi_vccq_resistor(xqspi, resistor_value);
+        writel( VCC_100K_ohm | VCC_35_ohm | VCC_17_ohm |
+                VCCq_100K_ohm | VCCq_35_ohm | VCCq_17_ohm,
+                misc_base + SPI_POWER_CTRL);
+    }
+    else if(speed_us > 16) {
+        temp = speed_us / 4;
+        resistor_value = (temp * 5) / ( 5 - temp);
+        spi_vccq_resistor(xqspi, resistor_value);
+        writel( VCC_100K_ohm | VCC_35_ohm | VCC_17_ohm | VCC_08_ohm |
+                VCCq_100K_ohm | VCCq_35_ohm | VCCq_17_ohm | VCCq_08_ohm,
+                misc_base + SPI_POWER_CTRL);
+    }
+    else {
+        spi_vccq_resistor(xqspi, 0);
+        writel( VCC_100K_ohm | VCC_35_ohm | VCC_17_ohm | VCC_08_ohm | VCC_04_ohm |
+                VCCq_100K_ohm | VCCq_35_ohm | VCCq_17_ohm | VCCq_08_ohm | VCCq_04_ohm,
+                misc_base + SPI_POWER_CTRL);
+    }
+
+	spi_set_cs(xqspi, 1);
+}
+
+void spi_dma_enable(struct zynq_plspi *xqspi)
+{
+	uint32_t config_reg = readl(xqspi->misc_regs + SPI_CFG);
+
+	config_reg |= B1;
+	writel(config_reg, xqspi->misc_regs + SPI_CFG);
+}
+
+
+void spi_dma_disable(struct zynq_plspi *xqspi)
+{
+	uint32_t config_reg = readl(xqspi->misc_regs + SPI_CFG);
+
+	config_reg &= ~B1;
+	writel(config_reg, xqspi->misc_regs + SPI_CFG );
+}
+
+
+void spi_dma_write_config(struct zynq_plspi *xqspi)
+{
+	uint32_t val = 0;
+
+	writel( B2, xqspi->dma_regs + MM2S_DMACR);
+	while (readl(xqspi->dma_regs + MM2S_DMACR) & B2)
+		udelay(10);
+	writel(B0, xqspi->dma_regs + MM2S_DMACR);
+
+	do {
+		val = readl(xqspi->dma_regs + MM2S_DMASR);
+		udelay(10);
+	} while (val & B0);
+
+
+}
+
+void spi_dma_read_config(struct zynq_plspi *xqspi)
+{
+	uint32_t val = 0;
+
+	writel(B2, xqspi->dma_regs + S2MM_DMACR);
+	while (readl(xqspi->dma_regs + S2MM_DMACR) & B2)
+		udelay(10);
+	writel(B0, xqspi->dma_regs + S2MM_DMACR);
+	do {
+		val = readl(xqspi->dma_regs + S2MM_DMASR);
+		udelay(10);
+	} while (val & B0);
+}
 
 void spi_SetSpiProtocol(struct zynq_plspi *q,u8 buswide)
 {
-	void __iomem *base = q->regs;
+	void __iomem *base = q->misc_regs;
 #ifdef ENABLE_PRINT_DEBUG
     printk("===>Set Spi protocal to bus wide is [%d] \n\r", buswide);
 #endif
     if(gcCurSpiBusWd != buswide) {
-        zynq_plspi_write((base + SPI_PROTOCOL),(0x0f & buswide));
+        zynq_plspi_write((base + SPI_BUS_WIDTH),(0x0f & buswide));
         gcCurSpiBusWd = 0x0f & buswide;
     }
 	
 }
 void spi_SetDummyCycle(struct zynq_plspi *q,u16 cycle_cnt)
 {
-void __iomem *base = q->regs;
+void __iomem *base = q->rd_regs;
 #ifdef ENABLE_PRINT_DEBUG
     printk("\nSet Spi DummyCycle to [%d] \n\r", cycle_cnt);
 #endif
@@ -404,14 +629,13 @@ void rcovSpidefMd(struct zynq_plspi *q)
 
 void spi_SendCmd(struct spi_device *qspi,u8 command)
 {
+
 struct zynq_plspi *xqspi = spi_master_get_devdata(qspi->master);
-    zynq_plspi_write( xqspi->regs+SPI_WR_LEN, 1);
-    zynq_plspi_write(xqspi->regs+SPI_DR, command);
-    spi_StartWrite(xqspi->regs);
-#ifndef USING_INTERRUPTE
-   spi_WaitControllerReady(xqspi->regs);
-   xqspi->bytes_to_transfer -=1;
-#endif
+
+    zynq_plspi_write(xqspi->wr_regs+SPI_WR_DR, command);
+	while( readl(xqspi->wr_regs + SPI_WR_SR) & B2) ;
+    zynq_plspi_write( xqspi->wr_regs+SPI_WR_LEN, 1);
+	
 }
 
 void spi_SendData(struct spi_device *qspi,u8 *data, u32 len)
@@ -427,35 +651,41 @@ struct zynq_plspi *xqspi = spi_master_get_devdata(qspi->master);
 #ifdef ENABLE_PRINT_DEBUG
 	printk("====>Send data:\n");
 #endif
-    zynq_plspi_write(xqspi->regs+SPI_WR_LEN,(u16)len);
     for(i=0;i<len;i++) {
-        zynq_plspi_write(xqspi->regs+SPI_DR, *data);
+        zynq_plspi_write(xqspi->wr_regs+SPI_WR_DR, *data);
+
 #ifdef ENABLE_PRINT_DEBUG
 	printk("0x%x ",*data);
 	if(i&&(!(i%8)))printk("\n");
 #endif
 	data++;
     }
+	
+
+   // zynq_plspi_write(xqspi->wr_regs+SPI_WR_LEN,(u16)len);
 #ifdef ENABLE_PRINT_DEBUG
 	printk("\n====>send data complete. \n");
 #endif
-   spi_StartWrite(xqspi->regs);
-#ifndef USING_INTERRUPTE  
- spi_WaitControllerReady(xqspi->regs);
- xqspi->bytes_to_transfer-=len;
- #endif
+
+
 #endif
 }
 
 void spi_ReadData(struct spi_device *qspi,u8 *data, u32 len)
 {
-struct zynq_plspi *xqspi = spi_master_get_devdata(qspi->master);
-    u32 i;
-    zynq_plspi_write(xqspi->regs+SPI_RD_LEN, len);
-    spi_StartRead(xqspi->regs);
-#ifndef USING_INTERRUPTE
-	spi_WaitControllerReady(xqspi->regs);
+
+	struct zynq_plspi *xqspi = spi_master_get_devdata(qspi->master);
+  	u32 i=0;  
+
+      for(i = 0; i < len; i++) {
+        *(u8 *)xqspi->rxbuf = (u8)zynq_plspi_read(xqspi->rd_regs + SPI_RD_DR);
+
+#ifdef ENABLE_PRINT_DEBUG
+	    printk("0x%x ",*(u8 *)xqspi->rxbuf);
+	    if(i&&(!(i%8)))printk("\n");
 #endif
+         xqspi->rxbuf++;
+    }
 }
 u16 IsSpecialCommand(u8 command)
 {
@@ -469,7 +699,7 @@ u16 IsSpecialCommand(u8 command)
     return 0xffff;
 }
 
-
+#if 0
 void readID(void __iomem *base)
 {
 	    u8  cRDID = SPI_FLASH_INS_RDID;
@@ -484,7 +714,7 @@ void readID(void __iomem *base)
                spi_StartWrite(base);
 	       spi_WaitControllerReady(base);
 	       zynq_plspi_write(base + SPI_RD_LEN, 5);
-	       spi_StartRead(base);
+	       //spi_StartRead(base);
 	       spi_WaitControllerReady(base);
 
 	       printk(" ====> read device id :\n");
@@ -498,6 +728,65 @@ void readID(void __iomem *base)
 	      
 	       printk("2===> config_reg is 0x%x \n",config_reg);
 }
+#endif
+static void spi_set_clk(struct zynq_plspi *xqspi, int mhz)
+{
+	void __iomem *misc_base = xqspi->misc_regs;
+	uint32_t value = readl(misc_base + SPI_CLK);
+
+	uint32_t clkm;	// bit[5:0]
+	uint32_t clkd;	// bit[11:6]
+
+    value &= ~0xfff;// mask[11:0]
+/*
+ *      f/100  = clkm/clkd
+ *      CLKM [6,12], default 10
+ *      CLKM, CLKD should even
+ */
+    if( (0<mhz) && (mhz <=25)) {
+        printk("==========> set to 25 MHz\n");
+        clkm = 10;
+        clkd = 40;
+    }    
+    else if( (25<mhz) && (mhz <=50)){
+        printk("==========> set to 50 MHz\n");
+        clkm = 10;
+        clkd = 20;
+    }    
+    else if( (50<mhz) && (mhz <=100)){
+        printk("==========> set to 100 MHz\n");
+        clkm = 10;
+        clkd = 10;
+    }    
+    else if( (100<mhz) && (mhz <=200)){
+        printk("==========> set to 200 MHz\n");
+        clkm = 12;
+        clkd = 6; 
+    }    
+    else{
+        printk("==========> clk %d MHz out of range, only support 25/50/100/200 MHz\n", mhz);
+        return ;
+    }  
+	
+	writel( 0 | (clkd << 6) | clkm , misc_base + SPI_CLK);
+	//while( (readl(misc_base + SPI_CLK) & B31) == 0 ) ;
+	
+	if(!spi_WaitControllerReady(misc_base + SPI_CLK,B31,0))
+		printk("====> Init clock Error \n");
+}
+
+static void spi_set_dq_phase(struct zynq_plspi *xqspi, int value)
+{
+	int i;
+	void __iomem *rd_base = xqspi->rd_regs;
+
+	for(i=0; i<8; i++){
+		writel((value << 8) | i, rd_base + SPI_RD_IO_DELAY);
+		mdelay(1);
+	}
+} 
+
+
 /**
  * zynq_plspi_init_hw - Initialize the hardware
  * @xqspi:	Pointer to the zynq_plspi structure
@@ -520,17 +809,27 @@ void readID(void __iomem *base)
  */
 static void zynq_plspi_init_hw(struct zynq_plspi *xqspi)
 {
-   	void __iomem *base = xqspi->regs;
-	gRbase = xqspi->regs;
+   	void __iomem *base = xqspi->misc_regs;
+	gRbase = xqspi->misc_regs;
+
     printk("====> gRbase is [0x%x] \n",(u32 *)gRbase);
     /*Check the FPGA Configuration Release*/
     printk("^_^ Firmware version is 0x%x.\n", zynq_plspi_read(base+SPI_VERSION) );
-    u32 config_reg = zynq_plspi_read(base + SPI_CFG);
+   
+	xqspi->speed_hz = 25000000;
+
+	spi_set_clk(xqspi, 25);
+	
+	spi_set_dq_phase(xqspi, 0);
+
+
+	writel(B5, base + SPI_CFG);
+
+	spi_vccq_on(xqspi, 3200);	// unit is mv
     
     /* Deselect the slave,set CS# high level */
-     config_reg |= ZYNQ_QSPI_CONFIG_SSCTRL_MASK;
-     zynq_plspi_write(base + SPI_CFG, config_reg);
-   
+  	spi_set_cs(xqspi, 1);
+
     gcCurSpiMode = EXTENDED;//EXTENDED;//DUAL;//QUAD;
     switch(gcCurSpiMode){
 	case EXTENDED:
@@ -546,45 +845,12 @@ static void zynq_plspi_init_hw(struct zynq_plspi *xqspi)
     
     spi_SetDummyCycle(xqspi,0);
     
-    /* Set clock frequency to 25 MHz, set 8 DUMMY cycles, disable WP and HOLD modes and enable SPI controller */
-    zynq_plspi_write((base + SPI_CLK),0x0A280A);
-    zynq_plspi_write((base + SPI_CLK_DIVIDER),0x14141414);
     gcDummyBase = 0;
-    zynq_plspi_write((base + SPI_CR), B4);
     mdelay(10);
     return 0;
 }
 
-/**
- * zynq_plspi_chipselect - Select or deselect the chip select line
- * @qspi:	Pointer to the spi_device structure
- * @is_on:	Select(1) or deselect (0) the chip select line
- */
-static void zynq_plspi_chipselect(struct spi_device *qspi, int is_on)
-{
-	struct zynq_plspi *xqspi = spi_master_get_devdata(qspi->master);
-	
-	u32 config_reg;
-	unsigned long flags;
 
-	spin_lock_irqsave(&xqspi->config_reg_lock, flags);
-
-	config_reg = zynq_plspi_read(xqspi->regs + SPI_CFG);
-
-	if (is_on) {
-		/* Select the slave */
-		config_reg &= ~ZYNQ_QSPI_CONFIG_SSCTRL_MASK;
-	} else {
-		/* Deselect the slave */
-		config_reg |= ZYNQ_QSPI_CONFIG_SSCTRL_MASK;
-	}
-
-	zynq_plspi_write(xqspi->regs + SPI_CFG, config_reg);
-
-	printk("====> pl spi nor set cs [%d] \n",is_on);
-
-	spin_unlock_irqrestore(&xqspi->config_reg_lock, flags);
-}
 
 /**
  * zynq_plspi_setup_transfer - Configure QSPI controller for specified transfer
@@ -677,10 +943,12 @@ static void zynq_plspi_fill_tx_fifo(struct zynq_plspi *xqspi, u32 size)
 static irqreturn_t zynq_plspi_irq(int irq, void *dev_id)
 {
 	struct zynq_plspi *xqspi = dev_id;
-	u32 intr_status;
-	intr_status = zynq_plspi_read(xqspi->regs + SPI_SR);
-	zynq_plspi_write(xqspi->regs + SPI_SR , 0);
-//	printk("\n====>hand irq task.\n");
+	u32 intr_status_r,intr_status_w;
+	intr_status_r = zynq_plspi_read(xqspi->rd_regs + SPI_RD_SR);
+	zynq_plspi_write(xqspi->rd_regs + SPI_RD_SR , 0);
+	
+	intr_status_w = zynq_plspi_read(xqspi->wr_regs + SPI_WR_SR);
+	zynq_plspi_write(xqspi->wr_regs + SPI_WR_SR , 0);
 #if 0
        if(intr_status & ZYNQ_TX_INTERRUPTE){
 
@@ -695,7 +963,7 @@ static irqreturn_t zynq_plspi_irq(int irq, void *dev_id)
         	}
 	   
 #endif
-	if(intr_status&B4)
+//	if(intr_status&B4)
 	complete(&xqspi->done);
 	
 	return IRQ_HANDLED;
@@ -716,15 +984,15 @@ static int zynq_plspi_start_transfer(struct spi_device *qspi,
 			struct spi_transfer *transfer)
 {
 	struct zynq_plspi *xqspi = spi_master_get_devdata(qspi->master);
-	u32 i=0,data = 0;
 	u8 instruction = 0;
-	u8 index;
+	u8 use_dma = 0;
 	CommandSetTab *curr_inst;
 	static u16 CMDNum=0xffff;
 	u16 protocal = 0;
-    	u16 dummyClk = 0;
-    	static u8 cmdbw=1, addbw=1, databw=1;
+    u16 dummyClk = 0;
+    static u8 cmdbw=1, addbw=1, databw=1;
 	static u8 offset=0;
+	dma_addr_t dma_addr;
 	xqspi->txbuf = transfer->tx_buf;
 	xqspi->rxbuf = transfer->rx_buf;
 	xqspi->bytes_to_transfer = transfer->len;
@@ -732,11 +1000,14 @@ static int zynq_plspi_start_transfer(struct spi_device *qspi,
       
 	if (xqspi->txbuf)
 	instruction = *(u8 *)xqspi->txbuf;
-#if 1
+
 #ifdef USING_INTERRUPTE
 	reinit_completion(&xqspi->done);
-#endif	
 #endif
+	if (use_dma)
+		spi_dma_enable(xqspi);
+
+
 	if (instruction && xqspi->is_inst) {//if this is the first
 
 	     CMDNum = IsSpecialCommand(instruction);
@@ -776,67 +1047,99 @@ Send:
 #ifdef USING_INTERRUPTE
 //	reinit_completion(&xqspi->done);
 #endif	
+
 	spi_SendCmd(qspi,instruction);//send comman
 #ifdef ENABLE_PRINT_DEBUG
 	    printk("\n====>Send command  [0x%x] \n\r", instruction);
 #endif
+
 #ifdef USING_INTERRUPTE
     wait_for_completion(&xqspi->done);
     xqspi->bytes_to_transfer-=1;
 #endif
+
     offset=1;
 Send_addr_data:
-    if(xqspi->bytes_to_transfer != 0){	
+	    if(xqspi->bytes_to_transfer != 0){	
+			
 #ifdef USING_INTERRUPTE
-  // 	reinit_completion(&xqspi->done);
+	  // 	reinit_completion(&xqspi->done);
 #endif	
-	  if(CMDNum != 0xFFFF)
-	  	spi_SetSpiProtocol(xqspi,(offset?addbw:databw));
-        spi_SendData(qspi,(u8 *)&xqspi->txbuf[offset], xqspi->bytes_to_transfer);//send address 
+
+		  if(CMDNum != 0xFFFF)
+		  	spi_SetSpiProtocol(xqspi,(offset?addbw:databw));
+		  
+	        if(use_dma){
+			dma_addr = dma_map_single(&qspi->dev,(u8 *)&xqspi->txbuf[offset],
+							xqspi->bytes_to_transfer, DMA_TO_DEVICE);
+			spi_dma_write_config(xqspi);
+			writel(dma_addr, xqspi->dma_regs + MM2S_SA);
+			writel(transfer->len, xqspi->dma_regs + MM2S_LENGTH);
+			}else{
+			spi_SendData(qspi,(u8 *)&xqspi->txbuf[offset], xqspi->bytes_to_transfer);//send address 
+			}
+		
+		while( readl(xqspi->wr_regs + SPI_WR_SR) & B2) ;
+
+		zynq_plspi_write(xqspi->wr_regs+SPI_WR_LEN,(u16)xqspi->bytes_to_transfer);
+
 #ifdef USING_INTERRUPTE
-    wait_for_completion(&xqspi->done);
-    xqspi->bytes_to_transfer=0;
+	    wait_for_completion(&xqspi->done);
+	    xqspi->bytes_to_transfer=0;
 #endif
-	}
-  	return (transfer->len) - (xqspi->bytes_to_transfer);
+		}
+	goto end;
    	}
 	else if(xqspi->txbuf){
 		offset = 0;
 		goto Send_addr_data;
 		}
 
-	
-xfer_data:
+
+
 	if(xqspi->bytes_to_receive)
 	{
 #ifdef USING_INTERRUPTE
 //	reinit_completion(&xqspi->done);
-#endif		
+#endif
+
 	if(CMDNum != 0xFFFF)
 		spi_SetSpiProtocol(xqspi,databw);
-        spi_ReadData(qspi,xqspi->rxbuf, xqspi->bytes_to_receive);
+
+	if(use_dma){
+	dma_addr = dma_map_single(&qspi->dev, xqspi->rxbuf,xqspi->bytes_to_receive, DMA_FROM_DEVICE);
+	spi_dma_read_config(xqspi);
+	writel(dma_addr, xqspi->dma_regs + S2MM_DA);
+	writel(xqspi->bytes_to_receive, xqspi->dma_regs + S2MM_LENGTH);
+	}
+	
+	zynq_plspi_write(xqspi->rd_regs+SPI_RD_LEN, xqspi->bytes_to_receive);
+
+
+
 #ifdef USING_INTERRUPTE
 	  wait_for_completion(&xqspi->done);
 #endif
 #ifdef ENABLE_PRINT_DEBUG
-	      printk("====>Recivce data start:\n\r");
+	printk("====>Recivce data start:\n\r");
 #endif
-      for(i = 0; i < xqspi->bytes_to_receive; i++) {
-        *(u8 *)xqspi->rxbuf = (u8)zynq_plspi_read(xqspi->regs + SPI_DR);
-#ifdef ENABLE_PRINT_DEBUG
-	    printk("0x%x ",*(u8 *)xqspi->rxbuf);
-	    if(i&&(!(i%8)))printk("\n");
-#endif
-         xqspi->rxbuf++;
-    }
+
+        if(!use_dma)
+		spi_ReadData(qspi,xqspi->rxbuf, xqspi->bytes_to_receive);
+
 #ifdef ENABLE_PRINT_DEBUG
 	printk("\n====>Recivce data end . \n");
 #endif
-      xqspi->bytes_to_receive -=i;
-	  
-		  return (transfer->len) - (xqspi->bytes_to_receive);
-
 	}
+end:
+
+	if (use_dma) {
+		spi_dma_disable(xqspi);
+		dma_unmap_single(&qspi->dev, dma_addr, transfer->len, 
+			transfer->tx_buf ? DMA_TO_DEVICE: DMA_FROM_DEVICE);
+		}
+
+	return transfer->len;
 }
 /**
  * zynq_plspi_work_queue - Get the request from queue to perform transfers
@@ -875,7 +1178,7 @@ static void zynq_plspi_work_queue(struct work_struct *work)
 
 		/* Select the chip if required */
 			if (cs_change) {
-				zynq_plspi_chipselect(qspi, 1);
+				spi_set_cs(xqspi, 0);
 				xqspi->is_inst = 1;
 			}
 
@@ -905,9 +1208,11 @@ static void zynq_plspi_work_queue(struct work_struct *work)
 			if (transfer->delay_usecs)
 				udelay(transfer->delay_usecs);
 
+		//	printk("transfer->cs_change is %d\n",transfer->cs_change);
+		
 			if (cs_change)
 				/* Deselect the chip */
-				zynq_plspi_chipselect(qspi, 0);
+				spi_set_cs(xqspi, 1);
 
 			if (transfer->transfer_list.next == &msg->transfers)
 				break;
@@ -918,9 +1223,10 @@ static void zynq_plspi_work_queue(struct work_struct *work)
 
 		zynq_plspi_setup_transfer(qspi, NULL);
 		
-          
+	//	printk("cs_change is %d,status is %d\n",cs_change,status);   
+		
 		if (!(status == 0 && cs_change))
-			zynq_plspi_chipselect(qspi, 0);
+			spi_set_cs(xqspi, 1);
 
 		spin_lock_irqsave(&xqspi->trans_queue_lock, flags);
 	}
@@ -1136,21 +1442,75 @@ static int zynq_plspi_probe(struct platform_device *pdev)
 	int ret = 0;
 	struct spi_master *master;
 	struct zynq_plspi *xqspi;
-	struct resource *res;
+	
+	struct resource *res0;
+	struct resource *res1;
+	struct resource *res2;
+	struct resource *res3;
+
+
+
+
+	res0 = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	res1 = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	res2 = platform_get_resource(pdev, IORESOURCE_MEM, 2);
+	res3 = platform_get_resource(pdev, IORESOURCE_MEM, 3);
+
+
+	if( !res0 || !res1 || !res2 || !res3) {
+		printk("no memory specified!\n");
+		goto remove_master;
+	}
+
+	
+	printk("misc res is 0x%x \n",res0->start);	
+	printk("read res is 0x%x \n",res1->start);	
+	printk("write res is 0x%x \n",res2->start);	
+	printk("dma res is 0x%x \n",res3->start);	
+	
 	master = spi_alloc_master(&pdev->dev, sizeof(*xqspi));
 	if (master == NULL)
 		return -ENOMEM;
 
-	xqspi = spi_master_get_devdata(master);
+	
+	
 	master->dev.of_node = pdev->dev.of_node;
+	master->mode_bits = SPI_TX_QUAD | SPI_RX_QUAD;
+	master->setup = zynq_plspi_setup;
+	master->transfer = zynq_plspi_transfer;
+	//master->flags = SPI_MASTER_QUAD_MODE;
+	
 	platform_set_drvdata(pdev, master);
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	xqspi->regs = devm_ioremap_resource(&pdev->dev, res);
+
+	xqspi = spi_master_get_devdata(master);
+
+
+
+#if 0
+
+	xqspi->misc_regs = ioremap(res0->start, resource_size(res0));
+	xqspi->rd_regs   = ioremap(res1->start, resource_size(res1));
+	xqspi->wr_regs   = ioremap(res2->start, resource_size(res2));
+	xqspi->dma_regs  = ioremap(res3->start, resource_size(res3));
+#endif
+#if 1
+	xqspi->misc_regs = devm_ioremap_resource(&pdev->dev, res0);
+	xqspi->rd_regs	 = devm_ioremap_resource(&pdev->dev, res1);
+	xqspi->wr_regs	 = devm_ioremap_resource(&pdev->dev, res2);
+	xqspi->dma_regs	 = devm_ioremap_resource(&pdev->dev, res3);
+#endif
+	if( !xqspi->misc_regs ||  !xqspi->rd_regs || !xqspi->wr_regs || !xqspi->dma_regs){
+		printk("memory map err!\n");
+		goto remove_master;
+	}
+
+#if 0
 	if (IS_ERR(xqspi->regs)) {
 		ret = PTR_ERR(xqspi->regs);
 		goto remove_master;
 	}
+#endif
 	
 #ifdef USING_INTERRUPTE
 	xqspi->irq = platform_get_irq(pdev, 0);
@@ -1160,17 +1520,19 @@ static int zynq_plspi_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "irq resource not found\n");
 		goto remove_master;
 	}
+
 	ret = devm_request_irq(&pdev->dev, xqspi->irq, zynq_plspi_irq,
 			       0, pdev->name, xqspi);
-	//ret = request_irq(xqspi->irq, zynq_plspi_irq,
-	//		       IRQF_SHARED, pdev->name, xqspi);
+//	ret = request_irq(xqspi->irq, zynq_plspi_irq,
+//			       IRQF_SHARED, pdev->name, xqspi);
 	if (ret != 0) {
 		ret = -ENXIO;
 		dev_err(&pdev->dev, "request_irq failed\n");
 		goto remove_master;
 	}
 #endif
-	#if 0
+
+#if 0
 
 	if (of_property_read_u32(pdev->dev.of_node, "is-dual", &xqspi->is_dual))
 		dev_warn(&pdev->dev, "couldn't determine configuration info "
@@ -1202,8 +1564,8 @@ static int zynq_plspi_probe(struct platform_device *pdev)
 		goto clk_dis_aper;
 	}
 #endif
-	/* QSPI controller initializations */
-	zynq_plspi_init_hw(xqspi);
+
+
 
 	init_completion(&xqspi->done);
 
@@ -1213,12 +1575,10 @@ static int zynq_plspi_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "couldn't determine num-chip-select\n");
 		goto clk_dis_all;
 	}
-        master->mode_bits = SPI_TX_QUAD | SPI_RX_QUAD;
-	master->setup = zynq_plspi_setup;
-	master->transfer = zynq_plspi_transfer;
-	//master->flags = SPI_MASTER_QUAD_MODE;
 
-	xqspi->speed_hz = clk_get_rate(xqspi->devclk) / 2;
+
+
+	//xqspi->speed_hz = clk_get_rate(xqspi->devclk) / 2;
 
 	xqspi->dev_busy = 0;
 
@@ -1229,9 +1589,16 @@ static int zynq_plspi_probe(struct platform_device *pdev)
 	xqspi->queue_state = ZYNQ_QSPI_QUEUE_STOPPED;
 	xqspi->dev_busy = 0;
 
+	/* QSPI controller initializations */
+	zynq_plspi_init_hw(xqspi);
+
+
+
 	INIT_WORK(&xqspi->work, zynq_plspi_work_queue);
+	
 	xqspi->workqueue =
 		create_singlethread_workqueue(dev_name(&pdev->dev));
+	
 	if (!xqspi->workqueue) {
 		ret = -ENOMEM;
 		dev_err(&pdev->dev, "problem initializing queue\n");
@@ -1244,14 +1611,16 @@ static int zynq_plspi_probe(struct platform_device *pdev)
 		goto remove_queue;
 	}
 
+
+
 	ret = spi_register_master(master);
 	if (ret) {
 		dev_err(&pdev->dev, "spi_register_master failed\n");
 		goto remove_queue;
 	}
 
-	dev_info(&pdev->dev, "at 0x%08X mapped to 0x%08X, irq=%d\n", res->start,
-		 (u32 __force)xqspi->regs, xqspi->irq);
+
+
 
 	return ret;
 
@@ -1287,12 +1656,7 @@ static int zynq_plspi_remove(struct platform_device *pdev)
 	ret = zynq_plspi_destroy_queue(xqspi);
 	if (ret != 0)
 		return ret;
-#if 0
-	zynq_plspi_write(xqspi->regs + ZYNQ_QSPI_ENABLE_OFFSET, 0);
-
-	clk_disable_unprepare(xqspi->devclk);
-	clk_disable_unprepare(xqspi->aperclk);
-#endif
+	
 	spi_unregister_master(master);
 
 	dev_dbg(&pdev->dev, "remove succeeded\n");

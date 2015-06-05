@@ -603,6 +603,12 @@ config SPI_ZYNQ_ZED_PL
         help
            This selects a driver for the zynq zed board pl spi controller
 
+config NEW_SPI_ZYNQ_ZED_PL
+        tristate "new zynq zed board pl spi controller"
+        depends on ARCH_ZYNQ
+        help
+           This selects a driver for the zynq zed board new pl spi controller
+
 config SPI_XTENSA_XTFPGA
 	tristate "Xtensa SPI controller for xtfpga"
 	depends on (XTENSA && XTENSA_PLATFORM_XTFPGA) || COMPILE_TEST
