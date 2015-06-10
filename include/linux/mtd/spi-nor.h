@@ -36,6 +36,17 @@
 #define SPINOR_OP_RDCR		0x35	/* Read configuration register */
 #define SPINOR_OP_RDFSR		0x70	/* Read flag status register */
 
+#define SPINOR_OP_TDP		0x48	/* Tuning Data Pattern Command code*/
+#define READ_TDP_ATTRI_EXT	0x00
+#define READ_TDP_ATTRI_DUAL	0x10
+#define READ_TDP_ATTRI_QUAD	0x20
+#define PROG_TDP_ATTRI_EXT	0x40
+#define PROG_TDP_ATTRI_DUAL	0x50
+#define PROG_TDP_ATTRI_QUAD	0x60
+
+
+
+
 /* 4-byte address opcodes - used on Spansion and some Macronix flashes. */
 #define SPINOR_OP_READ4		0x13	/* Read data bytes (low frequency) */
 #define SPINOR_OP_READ4_FAST	0x0c	/* Read data bytes (high frequency) */
@@ -167,6 +178,7 @@ struct spi_nor {
 	u8			addr_width;
 	u8			erase_opcode;
 	u8			read_opcode;
+	u8			read_tuning_opcode;
 	u8			read_dummy;
 	u8			program_opcode;
 	enum read_mode		flash_read;
@@ -182,6 +194,8 @@ struct spi_nor {
 	int (*write_xfer)(struct spi_nor *nor, struct spi_nor_xfer_cfg *cfg,
 			  u8 *buf, size_t len);
 	int (*read_reg)(struct spi_nor *nor, u8 opcode, u8 *buf, int len);
+	int (*read_tuning)(struct spi_nor *nor, u8 attr,
+			size_t len, size_t *retlen, u_char *read_buf);
 	int (*write_reg)(struct spi_nor *nor, u8 opcode, u8 *buf, int len,
 			int write_enable);
 
@@ -211,6 +225,8 @@ struct spi_nor {
  *
  * Return: 0 for success, others for failure.
  */
+
+
 int spi_nor_scan(struct spi_nor *nor, const char *name, enum read_mode mode);
 
 #endif

@@ -22,11 +22,33 @@
 #include <linux/of_platform.h>
 #include <linux/spi/flash.h>
 #include <linux/mtd/spi-nor.h>
+#include <linux/slab.h>
 
 /* Define max times to check status register before we give up. */
 #define	MAX_READY_WAIT_JIFFIES	(40 * HZ) /* M25P16 specs 40s max chip erase */
 
 #define SPI_NOR_MAX_ID_LEN	6
+
+ u8 micron_tuning_def_blk_pattern_1bit[16] = {
+	0xDC,0xC4,0x63,0xb9,
+	0xFF,0xFF,0xFF,0xFD,
+	0xEE,0x62,0x31,0xBC,
+	0xFF,0xFF,0xFF,0xFE
+	};
+
+u8 micron_tuning_def_blk_pattern_2bit[32] = {
+	0xF3,0xF0,0xF0,0x30,0x3C,
+	0xF7,0xF5,0xFF,0xFF,0xFF,
+	0xFC,0xFC,0x3C,0x0C,0x0F,
+	0xFD,0xFD,0x7F,0xFF,0xFF
+	};
+
+u8 micron_tuning_def_blk_pattern_4bit[64] = {
+	0xFF,0x0F,0xFF,0x00,0xFF,0xCC,0xC3,0xCC,0xC3,0x3C,0xCC,0xFF,0xFE,0xFF,0xFE,0xEF,
+	0xFF,0xDF,0xFF,0xDD,0xFF,0xFB,0xFF,0xFB,0xBF,0xFF,0x7F,0xFF,0x77,0xF7,0xBD,0xEF,
+	0xFF,0xF0,0xFF,0xF0,0x0F,0xFC,0xCC,0x3C,0xCC,0x33,0xCC,0xCF,0xFE,0xFF,0xFF,0xEE,
+	0xFF,0xFD,0xFF,0xFD,0xDF,0xFF,0xBF,0xFF,0xBB,0xFF,0xF7,0xFF,0xF7,0x7F,0x7B,0xDE,
+	};
 
 struct flash_info {
 	/*
@@ -949,6 +971,118 @@ static int micron_quad_enable(struct spi_nor *nor)
 	return 0;
 }
 
+extern 	int set_micron_spi_controller_clk(int mhz);
+extern void set_micron_spi_readphase(int value);
+extern void set_micron_spi_io_delay(int value);
+
+int  micron_tuning(struct spi_nor *nor,enum read_mode mode)
+{
+
+	int ret = 0;
+	u8 attri;
+	u8 patlen = 0;
+	u8 *pat = NULL;
+	u8 *buf;
+	size_t retlen;
+
+	/* Default commands */
+	switch (nor->flash_read) {
+
+	case SPI_NOR_DUAL:
+		attri = READ_TDP_ATTRI_DUAL;
+		patlen = 32;
+		pat = micron_tuning_def_blk_pattern_2bit;
+		break;
+	case SPI_NOR_QUAD:
+		attri = READ_TDP_ATTRI_QUAD;
+		patlen = 64;
+		pat = micron_tuning_def_blk_pattern_4bit;
+		break;
+	case SPI_NOR_NORMAL:
+		attri = READ_TDP_ATTRI_EXT;
+		patlen = 16;
+		pat = micron_tuning_def_blk_pattern_1bit;
+		break;
+	default:
+		dev_err(nor->dev, "No Read mode defined\n");
+		return -EINVAL;
+	}
+
+	dev_dbg(nor->dev, "attibute 0x%x \n", attri);
+
+	buf = (u8 *)kmalloc(patlen, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	ret = spi_nor_lock_and_prep(nor, SPI_NOR_OPS_READ);
+	if (ret)
+		goto out;
+
+	ret = nor->read_tuning(nor, attri, patlen, &retlen, buf);
+
+	spi_nor_unlock_and_unprep(nor, SPI_NOR_OPS_READ);
+
+	if (memcmp(buf, pat, patlen))
+		ret = -EIO;
+out:
+	kfree(buf);
+	return ret;
+}
+
+static int spi_nor_tuning(struct spi_nor *nor,struct flash_info	*info,
+						enum read_mode mode)
+{
+	int status = 1;
+	switch (JEDEC_MFR(info)) {
+
+	case CFI_MFR_ST:
+		nor->read_tuning_opcode = SPINOR_OP_TDP;
+		int i=0,j=0,n=0;
+		u16 phasebak[5];
+		set_micron_spi_controller_clk(50);
+
+		for(i=0;i<60;i++){
+
+		set_micron_spi_readphase(i);
+
+		for(n=0;n<30;n++){
+
+			set_micron_spi_io_delay(n);
+
+			if(!micron_tuning(nor,mode)){
+			status = 0;
+			break;
+			}
+		}
+
+		if (!status) {
+			printk("found valid phase is %d,save it \n",i);
+				phasebak[j] = ((n<<8)|i);
+			j++;
+			status = 1;
+		}
+
+		if(j>=5) {
+			printk("tuning success,and last phase is %d,io delay is %d \n",
+				(phasebak[2]|0x00ff),((phasebak[2]|0xff00)>>8));
+
+			set_micron_spi_readphase(phasebak[2]|0x00ff);
+			set_micron_spi_io_delay((phasebak[2]|0xff00)>>8);
+			status = 0;
+		break;
+		}
+		}
+		if ((i >= 60) || status )
+			printk("tuning failed! \n");
+		return status;
+	default:
+		status = 0;
+		return status;
+		}
+	return 0;
+
+}
+
 static int set_quad_mode(struct spi_nor *nor, struct flash_info *info)
 {
 	int status;
@@ -1002,6 +1136,7 @@ int spi_nor_scan(struct spi_nor *nor, const char *name, enum read_mode mode)
 	ret = spi_nor_check(nor);
 	if (ret)
 		return ret;
+
 
 	/* Try to auto-detect if chip name wasn't specified */
 	if (!name)
@@ -1183,6 +1318,12 @@ int spi_nor_scan(struct spi_nor *nor, const char *name, enum read_mode mode)
 	}
 
 	nor->read_dummy = spi_nor_read_dummy_cycles(nor);
+
+	printk("Start tuning ......\n");
+	if(spi_nor_tuning(nor,info,mode)) {
+		printk("spi nor tuning failed !\n");
+		return -EINVAL;
+		}
 
 	dev_info(dev, "%s (%lld Kbytes)\n", id->name,
 			(long long)mtd->size >> 10);

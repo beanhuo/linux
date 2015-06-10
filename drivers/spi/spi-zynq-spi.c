@@ -123,6 +123,7 @@ u8 gcCurSpiDummy = 0xFF;
  * Name of this driver
  */
 #define DRIVER_NAME			"zynq-plspi"
+struct spi_master * global_master;
 
 
 /*
@@ -775,7 +776,7 @@ static void spi_set_clk(struct zynq_plspi *xqspi, int mhz)
 		printk("====> Init clock Error \n");
 }
 
-static void spi_set_dq_phase(struct zynq_plspi *xqspi, int value)
+static void spi_set_io_delay(struct zynq_plspi *xqspi, int value)
 {
 	int i;
 	void __iomem *rd_base = xqspi->rd_regs;
@@ -786,6 +787,41 @@ static void spi_set_dq_phase(struct zynq_plspi *xqspi, int value)
 	}
 } 
 
+void set_micron_spi_io_delay(int value)
+{
+
+	struct zynq_plspi *xqspi = spi_master_get_devdata(global_master);
+	spi_set_io_delay(xqspi,value);
+
+
+}
+EXPORT_SYMBOL(set_micron_spi_io_delay);
+
+int set_micron_spi_controller_clk(int mhz)
+{
+		struct zynq_plspi *xqspi = spi_master_get_devdata(global_master);
+
+	    spi_set_clk(xqspi, mhz);
+
+		//spi_set_dq_phase(xqspi, 0);
+}
+EXPORT_SYMBOL(set_micron_spi_controller_clk);
+
+void set_micron_spi_readphase(int value)
+{
+	int i;
+	struct zynq_plspi *xqspi = spi_master_get_devdata(global_master);
+	void __iomem *misc_base = xqspi->misc_regs;
+	u32 config = readl(misc_base + SPI_CLK);
+	config &= (~(0xFC0000));
+    config |= (value<<18);
+
+	writel(config, misc_base + SPI_CLK);
+	mdelay(1);
+	if(!spi_WaitControllerReady(misc_base + SPI_CLK,B31,0))
+		printk("====> Init clock Error \n");
+}
+EXPORT_SYMBOL(set_micron_spi_readphase);
 
 /**
  * zynq_plspi_init_hw - Initialize the hardware
@@ -819,8 +855,8 @@ static void zynq_plspi_init_hw(struct zynq_plspi *xqspi)
 	xqspi->speed_hz = 25000000;
 
 	spi_set_clk(xqspi, 25);
-	
-	spi_set_dq_phase(xqspi, 0);
+	//spi_set_clk(xqspi, 100);
+	spi_set_io_delay(xqspi, 0);
 
 
 	writel(B5, base + SPI_CFG);
@@ -1471,9 +1507,9 @@ static int zynq_plspi_probe(struct platform_device *pdev)
 	master = spi_alloc_master(&pdev->dev, sizeof(*xqspi));
 	if (master == NULL)
 		return -ENOMEM;
+	
+	global_master = master;
 
-	
-	
 	master->dev.of_node = pdev->dev.of_node;
 	master->mode_bits = SPI_TX_QUAD | SPI_RX_QUAD;
 	master->setup = zynq_plspi_setup;
@@ -1618,9 +1654,6 @@ static int zynq_plspi_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "spi_register_master failed\n");
 		goto remove_queue;
 	}
-
-
-
 
 	return ret;
 
