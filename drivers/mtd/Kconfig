@@ -309,6 +309,13 @@ config MTD_SWAP
 	  The driver provides wear leveling by storing erase counter into the
 	  OOB.
 
+config MTD_NAND_BBT
+	tristate "Bad Block Table support for NAND based devices"
+	depends on MTD
+	help
+	  Since struct nand_chip is removed from nand_bbt.c, BBT is now
+	  shareable. Both NAND and SPI NAND can use it.
+
 source "drivers/mtd/chips/Kconfig"
 
 source "drivers/mtd/maps/Kconfig"
