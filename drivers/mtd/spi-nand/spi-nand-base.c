@@ -472,19 +472,20 @@ static int spi_nand_wait(struct spi_nand_chip *chip, u8 *s)
 	unsigned long timeo = jiffies;
 	u8 status, state = chip->state;
 	int ret = -ETIMEDOUT;
+	int count = 0;
 
 	if (state == FL_ERASING)
 		timeo += msecs_to_jiffies(400);
 	else
 		timeo += msecs_to_jiffies(20);
 
-	while (time_before(jiffies, timeo)) {
+	while (time_before(jiffies, timeo) || count < MIN_TRY_COUNT) {
 		spi_nand_read_status(chip, &status);
 		if ((status & STATUS_OIP_MASK) == STATUS_READY) {
 			ret = 0;
 			goto out;
 		}
-		cond_resched();
+		count++;
 	}
 out:
 	if (s)
@@ -505,16 +506,17 @@ static int spi_nand_wait_crbusy(struct spi_nand_chip *chip)
 	unsigned long timeo = jiffies;
 	u8 status;
 	int ret = -ETIMEDOUT;
+	int count = 0;
 
 	timeo += msecs_to_jiffies(20);
 
-	while (time_before(jiffies, timeo)) {
+	while (time_before(jiffies, timeo) || count < MIN_TRY_COUNT) {
 		spi_nand_read_status(chip, &status);
 		if ((status & STATUS_CRBSY_MASK) == STATUS_READY) {
 			ret = 0;
 			goto out;
 		}
-		cond_resched();
+		count++;
 	}
 out:
 	return ret;

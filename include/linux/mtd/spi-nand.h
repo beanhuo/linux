@@ -288,6 +288,7 @@ struct spi_nand_flash {
 };
 
 #define SPINAND_MAX_ADDR_LEN		4
+#define MIN_TRY_COUNT		3
 
 struct spi_nand_cmd {
 	u8		cmd;
