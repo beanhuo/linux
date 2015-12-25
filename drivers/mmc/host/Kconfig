@@ -329,6 +329,14 @@ config MMC_SDHCI_ST
 	  If you have a controller with this interface, say Y or M here.
 	  If unsure, say N.
 
+config MMC_SDHCI_ZYNQ_PL
+	tristate "MMC support for Micron EBU FPGA eMMC controller on ZED"
+	depends on ARCH_ZYNQ
+	depends on OF
+	help
+	  This selects the Micron EBU Hardware developed FPGA eMMC controller
+	  on Zedboard. Currently, only support SDMA.
+
 config MMC_OMAP
 	tristate "TI OMAP Multimedia Card Interface support"
 	depends on ARCH_OMAP
