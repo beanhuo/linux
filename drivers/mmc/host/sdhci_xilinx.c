@@ -149,6 +149,21 @@
 #define XILINX_RETRY_MAX 500
 #define XILINX_EMMC_DRV_VERSION "20150629"
 
+#define XILINX_SDHCI_USE_SDMA		(1<<0)	/* Host is SDMA capable */
+#define XILINX_SDHCI_USE_ADMA		(1<<1)	/* Host is ADMA capable */
+#define XILINX_SDHCI_REQ_USE_DMA	(1<<2)	/* Use DMA for this req. */
+#define XILINX_SDHCI_DEVICE_DEAD	(1<<3)	/* Device unresponsive */
+#define XILINX_SDHCI_SDR50_NEEDS_TUNING (1<<4)	/* SDR50 needs tuning */
+#define XILINX_SDHCI_NEEDS_RETUNING	(1<<5)	/* Host needs retuning */
+#define XILINX_SDHCI_AUTO_CMD12	(1<<6)	/* Auto CMD12 support */
+#define XILINX_SDHCI_AUTO_CMD23	(1<<7)	/* Auto CMD23 support */
+#define XILINX_SDHCI_PV_ENABLED	(1<<8)	/* Preset value enabled */
+#define XILINX_SDHCI_SDIO_IRQ_ENABLED	(1<<9)	/* SDIO irq enabled */
+#define XILINX_SDHCI_SDR104_NEEDS_TUNING (1<<10)	/* SDR104/HS200 needs tuning */
+#define XILINX_SDHCI_USING_RETUNING_TIMER (1<<11)	/* Host is using a retuning timer for the card */
+#define XILINX_SDHCI_USE_64_BIT_DMA	(1<<12)	/* Use 64-bit DMA */
+#define XILINX_SDHCI_HS400_TUNING	(1<<13)	/* Tuning for HS400 */
+
 struct xilinx_emmc_regs {
 	uint32_t reg_XILINX_MM2S_DMACR;
 	uint32_t reg_XILINX_MM2S_DMASR;
@@ -218,6 +233,7 @@ struct xilinx_emmc_host {
 
 	struct timer_list timer;
 	struct xilinx_emmc_regs regs;
+	int flag;
 	int rca;
 };
 
@@ -885,26 +901,40 @@ static int xilinx_cmd_tuning(struct mmc_host *mmc)
 	uint32_t status = 0;
 	int count = 0;
 	int phase = 0;
+	int index = 0;
+	int window_len = 0;
+	int window_start = 0;
 
 	for (phase = 0; phase < 30; phase++) {
 		dev_dbg(mmc_dev(mmc), "set cmd phase [%d] count %d\n", phase, count);
 		xilinx_set_cmd_phase(mmc, phase);
 		err = xilinx_mmc_send_status(mmc, &status, false);
-		if (err) {
+		if (err || (status & (R1_COM_CRC_ERROR | R1_ILLEGAL_COMMAND))) {
+			if (count > window_len) {
+				window_len = count;
+				window_start = index;
+			}
 			count = 0;
-			continue;
 		} else {
+			if (count == 0)
+				index = phase;
 			count++;
 		}
 
-		if (count == 3) {
-			dev_info(mmc_dev(mmc), "==========> cmd tuning finish. phase [%d %d]\n", phase - 2, phase);
-			xilinx_set_cmd_phase(mmc, phase - 1);
-			return 0;
-		}
+	}
+	if (count > window_len) {
+		window_len = count;
+		window_start = index;
 	}
 
-	dev_dbg(mmc_dev(mmc), "cmd tuning fail, count [%d]\n", count);
+	if (window_len >= 3) {
+		dev_info(mmc_dev(mmc), "==========> cmd tuning finish. phase [%d %d]\n",
+				window_start, window_start + window_len - 1);
+		xilinx_set_cmd_phase(mmc, window_start + ((window_len - 1) / 2));
+		return 0;
+	}
+
+	dev_err(mmc_dev(mmc), "cmd tuning fail, window length [%d]\n", window_len);
 	return -1;
 }
 
@@ -981,11 +1011,7 @@ static int read_ecsd_and_compare(struct mmc_host *mmc, uint8_t *pattern, int len
 		return -1;
 }
 
-
-/* FIXME default HS200 clock is 200 MHz */
-static int hs200_mhz = 200;
-
-static int xilinx_execute_hs200_tuning(struct mmc_host *mmc, u32 opcode)
+static int xilinx_execute_hs200_tuning(struct mmc_host *mmc, int mhz)
 {
 	struct xilinx_emmc_host *host = mmc_priv(mmc);
 	uint8_t *misc_reg = host->misc_reg;
@@ -1017,7 +1043,7 @@ static int xilinx_execute_hs200_tuning(struct mmc_host *mmc, u32 opcode)
 		xilinx_set_cmd_phase(mmc, clk_cmd_phase);
 		xilinx_set_rd_phase(mmc, clk_rd_phase);
 		xilinx_set_wr_phase(mmc, clk_wr_phase);
-		xilinx_set_clk(mmc, hs200_mhz);
+		xilinx_set_clk(mmc, mhz);
 
 		/* Step 4: Tuning cmd */
 		err = xilinx_cmd_tuning(mmc);
@@ -1041,6 +1067,96 @@ static int xilinx_execute_hs200_tuning(struct mmc_host *mmc, u32 opcode)
 err_out:
 	kfree(ext_csd);
 	return err;
+}
+
+static int xilinx_prepare_hs400(struct mmc_host *mmc, int mhz)
+{
+	struct xilinx_emmc_host *host = mmc_priv(mmc);
+	uint8_t *misc_reg = host->misc_reg;
+	uint8_t *ext_csd = NULL;
+	int err = 0;
+
+	int clk_cmd_phase, clk_wr_phase, clk_rd_phase;
+
+	/* Step 1: read ecsd */
+	err = xilinx_mmc_get_ext_csd(mmc, &ext_csd);
+	if (err || ext_csd == NULL) {
+		dev_err(mmc_dev(host->mmc), "==========> before HS400 tuning, get ext csd err\n");
+		return err;
+	}
+
+	if (ext_csd[EXT_CSD_CARD_TYPE] & 0xc0) {
+		/* Step 2: Set emmc device to HS400 mode */
+		xilinx_set_clk(mmc, 25);
+		xilinx_mmc_switch(mmc, EXT_CSD_CMD_SET_NORMAL, EXT_CSD_HS_TIMING, 1, 0);
+		xilinx_mmc_switch(mmc, EXT_CSD_CMD_SET_NORMAL, EXT_CSD_BUS_WIDTH, 6, 0);
+		xilinx_mmc_switch(mmc, EXT_CSD_CMD_SET_NORMAL, EXT_CSD_HS_TIMING, 3, 0);
+
+		/* Step 3: Set emmc host to HS400 mode */
+		writel(CFG_DDR_ENABLE | CFG_DATA_CLK, misc_reg + EMMC_CFG);
+		clk_wr_phase = 2;
+		clk_rd_phase = 0;
+		clk_cmd_phase = 1;
+
+		xilinx_set_cmd_phase(mmc, clk_cmd_phase);
+		xilinx_set_rd_phase(mmc, clk_rd_phase);
+		xilinx_set_wr_phase(mmc, clk_wr_phase);
+		xilinx_set_clk(mmc, mhz);
+
+		/* Step 4: Tuning cmd */
+		err = xilinx_cmd_tuning(mmc);
+		if (err) {
+			dev_err(mmc_dev(host->mmc), "==========> HS400 cmd tuning fail\n");
+			goto err_out;
+		}
+
+		/* Step 5: Tuning read */
+		err = xilinx_rd_tuning(mmc, ext_csd, 512);
+		if (err) {
+			dev_err(mmc_dev(host->mmc), "==========> HS400 rd tuning fail\n");
+			goto err_out;
+		}
+
+		dev_info(mmc_dev(host->mmc), "==========> HS400 tuning ok\n");
+	} else {
+		dev_err(mmc_dev(host->mmc), "==========> Doesn't support HS400\n");
+	}
+
+err_out:
+	kfree(ext_csd);
+	return err;
+}
+
+int xilinx_prepare_hs400_tuning(struct mmc_host *mmc, struct mmc_ios *ios)
+{
+	struct xilinx_emmc_host *host = mmc_priv(mmc);
+	unsigned long flags;
+
+	spin_lock_irqsave(&host->lock, flags);
+	host->flag |= XILINX_SDHCI_HS400_TUNING;
+	spin_unlock_irqrestore(&host->lock, flags);
+
+	return 0;
+}
+
+static int xilinx_execute_tuning(struct mmc_host *mmc, u32 opcode)
+{
+	struct xilinx_emmc_host *host = mmc_priv(mmc);
+	bool hs400_tuning;
+	unsigned long flags;
+	int ret;
+
+	spin_lock_irqsave(&host->lock, flags);
+	hs400_tuning = host->flag & XILINX_SDHCI_HS400_TUNING;
+	host->flag &= ~XILINX_SDHCI_HS400_TUNING;
+	spin_unlock_irqrestore(&host->lock, flags);
+
+	if (hs400_tuning)
+		ret = xilinx_prepare_hs400(mmc, 200);
+	else
+		ret = xilinx_execute_hs200_tuning(mmc, 200);
+
+	return ret;
 }
 
 static int detect_bus_width_change(struct xilinx_emmc_host *host, uint32_t opcode, uint32_t arg)
@@ -1632,7 +1748,8 @@ irq_out:
 static const struct mmc_host_ops xilinx_ops = {
 	.request    = xilinx_request,
 	.set_ios    = xilinx_set_ios,
-	.execute_tuning	= xilinx_execute_hs200_tuning,
+	.execute_tuning	= xilinx_execute_tuning,
+	.prepare_hs400_tuning = xilinx_prepare_hs400_tuning,
 	.pre_req    = xilinx_pre_request,
 	.post_req   = xilinx_post_request,
 };
@@ -1672,12 +1789,12 @@ static int xilinx_emmc_probe(struct platform_device *pdev)
 	 */
 	mmc->ops = &xilinx_ops;
 	mmc->ocr_avail = MMC_VDD_32_33 | MMC_VDD_33_34;
-	/* mmc->caps =  MMC_CAP_8_BIT_DATA | MMC_CAP_MMC_HIGHSPEED, */
+	mmc->caps =  MMC_CAP_8_BIT_DATA | MMC_CAP_MMC_HIGHSPEED;
 	/* support close-end multiblock transfer */
 	mmc->caps |= MMC_CAP_CMD23;
 	/* when set, mmc_cmd has MMC_RSP_CRC flag and mmc_resp_type() need it. */
 	mmc->caps |= MMC_CAP_WAIT_WHILE_BUSY;
-	/* mmc->caps2 = MMC_CAP2_HS200; */
+	mmc->caps2 = MMC_CAP2_HS200 | MMC_CAP2_HS400;
 
 	mmc->max_blk_size  = 512;
 	mmc->max_blk_count = 2 * 1024 * 10;
@@ -1726,7 +1843,7 @@ static int xilinx_emmc_probe(struct platform_device *pdev)
 	/*
 	 * reset host config
 	 */
-
+	host->flag = 0;
 	xilinx_reset_host(mmc);
 	writel(0xffffffff, host->wr_reg + EMMC_WR_TIMEOUT_VALUE);
 	writel(512, host->misc_reg + EMMC_BLK_LEN);
