@@ -5,6 +5,8 @@
 # Rewritten to use lists instead of if-statements.
 #
 
+# mmlog at the first place so that we can add mmlog_print in all device drivers
+obj-$(CONFIG_MICRON_MEMORY_LOG)	+= mmlog/
 obj-y				+= irqchip/
 obj-y				+= bus/
 

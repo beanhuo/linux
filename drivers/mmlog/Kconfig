@@ -1,0 +1,6 @@
+menuconfig MICRON_MEMORY_LOG
+	tristate "Micron EBU Memory log tool support"
+	default n
+	help
+	  This is to support Micron EBU software team developed
+	  Memory log tool for printing message to RAM.
