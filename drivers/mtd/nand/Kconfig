@@ -544,4 +544,10 @@ config MTD_NAND_HISI504
 	help
 	  Enables support for NAND controller on Hisilicon SoC Hip04.
 
+config MTD_NAND_MICRON_ZED
+	tristate "Support for Micron EBU FPGA NAND controller on Zedboard"
+	help
+	  Enables support for Micron EBU hardware developed FPGA PNAND controller
+	  on Xilinx Zedboard.
+
 endif # MTD_NAND
