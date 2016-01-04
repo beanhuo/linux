@@ -107,6 +107,13 @@ enum read_mode {
 	SPI_NOR_QUAD_IO,
 };
 
+typedef enum {
+    EXTENDED = 0,
+    DUAL,
+    QUAD,
+    OCTAL,
+} SpiMode;
+
 /**
  * struct spi_nor_xfer_cfg - Structure for defining a Serial Flash transfer
  * @wren:		command for "Write Enable", or 0x00 for not required

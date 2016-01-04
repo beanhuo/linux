@@ -46,6 +46,8 @@
 #define SPI_TX_QUAD		0x200
 #define SPI_RX_DUAL		0x400
 #define SPI_RX_QUAD		0x800
+#define SPI_TX_OCTAL		0x1000
+#define SPI_RX_OCTAL		0x2000
 
 /*---------------------------------------------------------------------------*/
 
