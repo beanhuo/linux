@@ -1600,7 +1600,7 @@ static int zynq_plspi_remove(struct platform_device *pdev)
 MODULE_ALIAS("platform:" DRIVER_NAME);
 
 static struct of_device_id zynq_plspi_of_match[] = {
-	{ .compatible = "zynq,zed-plspi", },
+	{ .compatible = "zynq,zed-plspi-nor", },
 	{ /* end of table */}
 };
 MODULE_DEVICE_TABLE(of, zynq_plspi_of_match);
