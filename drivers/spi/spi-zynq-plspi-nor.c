@@ -1621,5 +1621,5 @@ static struct platform_driver zynq_plspi_driver = {
 
 module_platform_driver(zynq_plspi_driver);
 MODULE_AUTHOR("BeanHuo");
-MODULE_DESCRIPTION("Xilinx Zynq PL SPI driver");
+MODULE_DESCRIPTION("Xilinx Zynq PL SPI driver for SPI NOR Flash");
 MODULE_LICENSE("GPL");
