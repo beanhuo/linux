@@ -283,12 +283,12 @@ int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
 	}
 
 	addr = (loff_t)pnum * ubi->peb_size + offset;
-#ifdef CONFIG_MTD_UBI_MLC_NAND_BAKVOL
+
 	skip = 0;
 	if (((offset == 0) && (len == ubi->peb_size)) ||
 		!safeguard)
 		skip = 1;
-
+#ifdef CONFIG_MTD_UBI_MLC_NAND_BAKVOL
 	if (ubi_check_bakvol_module(ubi) && (!skip)) {
 		loff_t addr_temp;
 		unsigned char *buf_temp = (unsigned char *)buf;
@@ -325,6 +325,31 @@ int ubi_io_write(struct ubi_device *ubi, const void *buf, int pnum, int offset,
 				ubi_assert(retlen == writelen);
 		}
 	} else
+#else
+#ifdef CONFIG_MTD_UBI_MLC_NAND_BACKUP
+		if(ubi_check_backup_volume(ubi) && (!skip))
+		{
+			loff_t addr_temp;
+			unsigned char *buf_temp;
+			int len_temp;
+			addr_temp = addr;
+			buf_temp = (unsigned char *)buf;
+			for(len_temp=0;len_temp<len;len_temp += ubi->min_io_size, 
+				addr_temp +=ubi->min_io_size, buf_temp += ubi->min_io_size)
+			{
+				if(ubi_backup_data_to_backup_volume(ubi, addr_temp))
+					ubi_err(ubi, "ubi_backup_data_to_backup_volume .... fail!\n");
+				err = mtd_write(ubi->mtd, addr_temp, ubi->min_io_size, &retlen, buf_temp);
+				if (err) {
+					ubi_err(ubi, "error %d while writing %d bytes to PEB %d:%d, written "
+					"%zd bytes", err, ubi->min_io_size, pnum, offset, retlen);
+					dump_stack();
+					ubi_dump_flash(ubi, pnum, offset, len);
+				} else
+					ubi_assert(retlen == ubi->min_io_size);
+			}
+		} else
+#endif
 #endif
 	{
 		err = mtd_write(ubi->mtd, addr, len, &retlen, buf);

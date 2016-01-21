@@ -1422,6 +1422,14 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 	err = ubi_bakvol_module_init(ubi);
 	if (err)
 		goto out_ai;
+#else
+#ifdef CONFIG_MTD_UBI_MLC_NAND_BACKUP
+	err = ubi_backup_volume_init(ubi);
+	if (err)
+		goto out_ai;
+
+	ubi_find_backup_block(ubi);
+#endif
 #endif
 
 #ifdef CONFIG_MTD_UBI_FASTMAP
@@ -1469,6 +1477,12 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 	err = ubi_bakvol_module_init_tail(ubi, ai);
 	if (err)
 		goto out_ai;
+#else
+#ifdef CONFIG_MTD_UBI_MLC_NAND_BACKUP
+	err = ubi_backup_volume_init_tail(ubi, ai);
+	if (err)
+		goto out_ai;
+#endif
 #endif
 
 	err = ubi_wl_init(ubi, ai);

@@ -296,7 +296,7 @@ struct ubi_vid_hdr {
 } __packed;
 
 /* Internal UBI volumes count */
-#ifdef CONFIG_MTD_UBI_MLC_NAND_BAKVOL
+#ifdef CONFIG_MTD_UBI_POWERLOSS_SOLUTION
 #define UBI_INT_VOL_COUNT 2
 #else
 #define UBI_INT_VOL_COUNT 1
@@ -337,6 +337,23 @@ struct ubi_vid_hdr {
 
 /* Size of the volume table record without the ending CRC */
 #define UBI_VTBL_RECORD_SIZE_CRC (UBI_VTBL_RECORD_SIZE - sizeof(__be32))
+
+/**
+ * struct ubi_bakup_info - a record for backup volume.
+ * @pnum: the physical block number as backup volume only have one block
+ * @found:   if found backup volume in the ubi device, 0-don't found 1-found
+ * @page_offset: offset of the page will be programed 
+ */
+
+struct ubi_bakup_info
+{
+	__u8   volume_built;
+	u32 page;//tha page number that has been programed
+	s32 pnum;
+	u32 src_page;
+	s32 src_pnum;
+
+};
 
 /**
  * struct ubi_bkblk_info - the information for one backup block .

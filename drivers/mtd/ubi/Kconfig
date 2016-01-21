@@ -77,11 +77,47 @@ config MTD_UBI_FASTMAP
 
 	   If in doubt, say "N".
 
-config MTD_UBI_MLC_NAND_BAKVOL
-	bool "UBI solution for NAND pair page (Experimental feature)"
+config MTD_UBI_POWERLOSS_SOLUTION
+	bool "UBI power loss solution (Experimental feature)"
 	default n
+	depends on MTD_UBI
 	help
 	   This used for MLC NAND paired page power-cut protection.
+	   based on Micron patent.
+
+	   MLC NAND paired page power loss is a known issue so far.
+	   Namely, MLC NAND pages are coupled in a sense that if you cut
+	   power while writing to a page, you corrupt not only this page,
+	   but also one of the previous pages which is paired with the current
+	   one. More detail information,please refer to follwoing link:
+	   http://www.linux-mtd.infradead.org/doc/ubifs.html
+
+	   If in doubt, say "N".
+
+config MTD_UBI_MLC_NAND_BAKVOL
+	bool "UBI solution for NAND pair page based on dual plane (Experimental feature)"
+	default n
+	depends on MTD_UBI_POWERLOSS_SOLUTION
+	help
+	   This used for MLC NAND paired page power-cut protection.
+	   based on Micron patent.
+
+	   MLC NAND paired page power loss is a known issue so far.
+	   Namely, MLC NAND pages are coupled in a sense that if you cut
+	   power while writing to a page, you corrupt not only this page,
+	   but also one of the previous pages which is paired with the current
+	   one. More detail information,please refer to follwoing link:
+	   http://www.linux-mtd.infradead.org/doc/ubifs.html
+
+	   If in doubt, say "N".
+
+config MTD_UBI_MLC_NAND_BACKUP
+	bool "UBI solution for NAND pair page based on single plane (Experimental feature)"
+	default n
+	depends on MTD_UBI_POWERLOSS_SOLUTION
+	help
+	   This used for MLC NAND paired page power-cut protection.
+	   based on Sandisk patent.
 
 	   MLC NAND paired page power loss is a known issue so far.
 	   Namely, MLC NAND pages are coupled in a sense that if you cut

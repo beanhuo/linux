@@ -548,6 +548,7 @@ struct ubi_device {
 	int vtbl_slots;
 	int vtbl_size;
 	struct ubi_vtbl_record *vtbl;
+	struct ubi_bakup_info *bakup_info;
 	struct ubi_bkblk_tbl *bkblk_tbl;
 	struct mutex device_mutex;
 
@@ -812,6 +813,14 @@ int ubi_corrupted_data_recovery(struct ubi_volume_desc *desc);
 int is_backup_need(struct ubi_device *ubi, loff_t addr);
 void init_bakvol(struct ubi_volume_desc *desc, uint8_t choice);
 void clear_bakvol(struct ubi_device *ubi);
+
+/* backup.c*/
+int ubi_backup_volume_init(struct ubi_device *ubi);
+void ubi_find_backup_block(struct ubi_device *ubi);
+int ubi_check_backup_volume(struct ubi_device *ubi);
+int ubi_backup_data_to_backup_volume(struct ubi_device *ubi, loff_t addr);
+int ubi_backup_volume_init_tail(struct ubi_device *ubi, struct ubi_attach_info *ai);
+int ubi_bad_data_recovery(struct ubi_device *ubi);
 
 /* vmt.c */
 int ubi_create_volume(struct ubi_device *ubi, struct ubi_mkvol_req *req);

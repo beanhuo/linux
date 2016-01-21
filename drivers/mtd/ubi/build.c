@@ -1033,6 +1033,10 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num,
 
 	ubi_devices[ubi_num] = ubi;
 	ubi_notify_all(ubi, UBI_VOLUME_ADDED, NULL);
+
+#ifdef CONFIG_MTD_UBI_MLC_NAND_BACKUP
+		ubi_bad_data_recovery(ubi);
+#endif
 	return ubi_num;
 
 out_debugfs:
