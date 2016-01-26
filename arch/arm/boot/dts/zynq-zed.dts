@@ -42,6 +42,23 @@
 		view-port = <0x0170>;
 		drv-vbus;
 	};
+	emmc0: emmc0{
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		interrupt-parent = <&intc>;
+		ranges ;
+
+		emmc{
+			compatible = "xilinx-emmc";
+			reg = <0x40400000 0x80
+				0x7AA00000 0x80
+				0x7AB00000 0x80
+				0x7AC00000 0x80
+				0x7AD00000 0x80>;
+			interrupts = <0 57 4>;
+		};
+	};
 };
 
 &qspi {
