@@ -1796,6 +1796,9 @@ static int xilinx_emmc_probe(struct platform_device *pdev)
 	mmc->caps |= MMC_CAP_WAIT_WHILE_BUSY;
 	mmc->caps2 = MMC_CAP2_HS200 | MMC_CAP2_HS400;
 
+	mmc->caps2 |= MMC_CAP2_HS200_1_8V_SDR | MMC_CAP2_HS200_1_2V_SDR;
+	mmc->caps2 |= MMC_CAP2_HS400_1_8V | MMC_CAP2_HS400_1_2V;
+
 	mmc->max_blk_size  = 512;
 	mmc->max_blk_count = 2 * 1024 * 10;
 	/* maximum number of bytes in one req */
