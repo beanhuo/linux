@@ -42,6 +42,33 @@
 		view-port = <0x0170>;
 		drv-vbus;
 	};
+        zed_ethernet_0: zed-emac@e000b000 {
+                #address-cells = <1>;
+                #size-cells = <0>;
+                clock-names = "ref_clk", "aper_clk";
+                clocks = <&clkc 13>, <&clkc 30>;
+                compatible = "xlnx,ps7-ethernet-1.00.a";
+                /* interrupt-parent = <&ps7_scugic_0>;*/
+                interrupt-parent = <&intc>;
+                interrupts = <0 22 4>;
+                local-mac-address = [00 0a 35 00 00 00];
+                phy-handle = <&phy0>;
+                phy-mode = "rgmii-id";
+                reg = <0xe000b000 0x1000>;
+                xlnx,eth-mode = <0x1>;
+                xlnx,has-mdio = <0x1>;
+                xlnx,ptp-enet-clock = <111111115>;
+                mdio {
+                #address-cells = <1>;
+                #size-cells = <0>;
+                        phy0: phy@0 {
+                        compatible = "marvell,88e1510";
+                        device_type = "ethernet-phy";
+                        reg = <0>;
+                        } ;
+                } ;
+        } ;
+
 	emmc0: emmc0{
 		compatible = "simple-bus";
 		#address-cells = <1>;
