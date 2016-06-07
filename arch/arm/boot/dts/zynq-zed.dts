@@ -50,7 +50,8 @@
                 compatible = "xlnx,ps7-ethernet-1.00.a";
                 /* interrupt-parent = <&ps7_scugic_0>;*/
                 interrupt-parent = <&intc>;
-                interrupts = <0 22 4>;
+                /*interrupts = <0 22 4>;*/
+                interrupts = <0 22 1>;
                 local-mac-address = [00 0a 35 00 00 00];
                 phy-handle = <&phy0>;
                 phy-mode = "rgmii-id";
@@ -82,8 +83,9 @@
 				0x7AA00000 0x80
 				0x7AB00000 0x80
 				0x7AC00000 0x80
-				0x7AD00000 0x80>;
-			interrupts = <0 57 4>;
+				0x7AD00000 0x80
+				0x7AE00000 0xff>;
+			interrupts = <0 57 1>;
 		};
 	};
 };
