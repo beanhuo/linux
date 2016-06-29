@@ -135,6 +135,10 @@ struct mmc_request {
 	struct completion	completion;
 	void			(*done)(struct mmc_request *);/* completion function */
 	struct mmc_host		*host;
+	struct mmc_cmdq_req	*cmdq_req;
+	struct completion	cmdq_completion;
+	struct request		*req; /* associated block request */
+
 };
 
 struct mmc_card;
@@ -144,6 +148,11 @@ extern int mmc_stop_bkops(struct mmc_card *);
 extern int mmc_read_bkops_status(struct mmc_card *);
 extern struct mmc_async_req *mmc_start_req(struct mmc_host *,
 					   struct mmc_async_req *, int *);
+extern void mmc_wait_cmdq_empty(struct mmc_card *);
+extern int mmc_cmdq_start_req(struct mmc_host *host,
+			      struct mmc_cmdq_req *cmdq_req);
+extern void mmc_blk_cmdq_req_done(struct mmc_request *mrq);
+
 extern int mmc_interrupt_hpi(struct mmc_card *);
 extern void mmc_wait_for_req(struct mmc_host *, struct mmc_request *);
 extern int mmc_wait_for_cmd(struct mmc_host *, struct mmc_command *, int);
@@ -154,6 +163,18 @@ extern void mmc_start_bkops(struct mmc_card *card, bool from_exception);
 extern int __mmc_switch(struct mmc_card *, u8, u8, u8, unsigned int, bool,
 			bool, bool);
 extern int mmc_switch(struct mmc_card *, u8, u8, u8, unsigned int);
+extern int __mmc_switch_cmdq_mode(struct mmc_command *cmd, u8 set, u8 index,
+					u8 value, unsigned int timeout_ms,
+					bool use_busy_signal, bool ignore_timeout);
+extern int mmc_cmdq_halt(struct mmc_host *host, bool enable);
+extern void mmc_cmdq_post_req(struct mmc_host *host, struct mmc_request *mrq,
+				int err);
+extern void mmc_start_cmdq_request(struct mmc_host *host,
+				   struct mmc_request *mrq);
+extern unsigned int mmc_erase_timeout(struct mmc_card *card,
+				      unsigned int arg,
+				      unsigned int qty);
+
 extern int mmc_send_tuning(struct mmc_host *host);
 extern int mmc_get_ext_csd(struct mmc_card *card, u8 **new_ext_csd);
 
@@ -196,6 +217,9 @@ extern void mmc_put_card(struct mmc_card *card);
 extern int mmc_flush_cache(struct mmc_card *);
 
 extern int mmc_detect_card_removed(struct mmc_host *host);
+
+extern int mmc_blk_cmdq_hangup(struct mmc_card *card);
+extern void mmc_blk_cmdq_restore(struct mmc_card *card);
 
 /**
  *	mmc_claim_host - exclusively claim a host
