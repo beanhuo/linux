@@ -568,12 +568,68 @@ static int mmc_decode_ext_csd(struct mmc_card *card, u8 *ext_csd)
 
 	/* eMMC v5 or later */
 	if (card->ext_csd.rev >= 7) {
+
+		card->ext_csd.cmdq_support = ext_csd[EXT_CSD_CMDQ_SUPPORT] & 0x1;
+		if (card->ext_csd.cmdq_support) {
+			card->ext_csd.cmdq_depth = (ext_csd[EXT_CSD_CMDQ_DEPTH] & 0x1F) + 1;
+			pr_err("%s: %s: CMDQ supported: depth: %d\n",
+				mmc_hostname(card->host), __func__,
+				card->ext_csd.cmdq_depth);
+		}
+
 		memcpy(card->ext_csd.fwrev, &ext_csd[EXT_CSD_FIRMWARE_VERSION],
 		       MMC_FIRMWARE_LEN);
 		card->ext_csd.ffu_capable =
 			(ext_csd[EXT_CSD_SUPPORTED_MODE] & 0x1) &&
 			!(ext_csd[EXT_CSD_FW_CONFIG] & 0x1);
+	} else {
+	       /*0x00 means Not defined, write 0x00 in lower eMMC version*/
+		card->ext_csd.pre_eol_info = 0x00;
+		card->ext_csd.device_life_time_est_typ_a = 0x00;
+		card->ext_csd.device_life_time_est_typ_b = 0x00;
+		card->ext_csd.cmdq_support = 0;
+		card->ext_csd.cmdq_depth = 0;
 	}
+#if 0
+		/* eMMC5.1*/
+		if (card->ext_csd.rev >= 8) {
+	/*strobe*/
+			if (ext_csd[EXT_CSD_STROBE_SUPPORT]) {
+				card->ext_csd.strobe_enhanced = ext_csd[EXT_CSD_STROBE_SUPPORT];
+				if (card->ext_csd.strobe_enhanced)
+					pr_info("%s: support STROBE_ENHANCED.\n", mmc_hostname(card->host));
+				else
+					pr_warn("%s: EXT_CSD_STROBE_SUPPORT bit is not set\n", mmc_hostname(card->host));
+			}
+	/*cache flush barrier*/
+			if (ext_csd[EXT_CSD_BARRIER_SUPPORT]) {
+				card->ext_csd.cache_flush_barrier = ext_csd[EXT_CSD_BARRIER_SUPPORT];
+				if (card->ext_csd.cache_flush_barrier)
+					pr_info("%s: support BARRIER_SUPPORT.\n", mmc_hostname(card->host));
+			}
+	/*cache flush policy*/
+			if (ext_csd[EXT_CSD_CACHE_FLUSH_POLICY]) {
+				card->ext_csd.cache_flush_policy = ext_csd[EXT_CSD_CACHE_FLUSH_POLICY] & EXT_CSD_CACHE_FLUSH_POLICY_FIFO;
+				if (card->ext_csd.cache_flush_policy)
+					pr_info("%s: support CACHE_FLUSH_POLICY_FIFO.\n", mmc_hostname(card->host));
+			}
+	/*bkops auto*/
+			if (ext_csd[EXT_CSD_BKOPS_SUPPORT] & 0x1) {
+				card->ext_csd.bkops_auto_en = ext_csd[EXT_CSD_BKOPS_EN] & EXT_CSD_BKOPS_AUTO_EN;
+				if (!card->ext_csd.bkops_auto_en) {
+					pr_info("%s: BKOPS_AUTO_EN bit is not set.\n", mmc_hostname(card->host));
+				}
+			}
+	/*rpmb 8k*/
+			if (ext_csd[EXT_CSD_WR_REL_PARAM] & EXT_CSD_RPMB_REL_WR_EN) {
+				pr_info("%s: support RPMB 8K Bytes read/write.\n", mmc_hostname(card->host));
+			}
+		}
+	
+		pr_err("%s: EXT_CSD revision 0x%02x pre_eol_info = 0x%02X device_life_time_est_typ_a = 0x%02X device_life_time_est_typ_b = 0x%02X.\n",
+			mmc_hostname(card->host),card->ext_csd.rev, card->ext_csd.pre_eol_info,
+				card->ext_csd.device_life_time_est_typ_a, card->ext_csd.device_life_time_est_typ_b);
+#endif
 out:
 	return err;
 }
@@ -1478,7 +1534,65 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 			card->ext_csd.packed_event_en = 1;
 		}
 	}
+#ifdef CONFIG_MMC_CQ_HCI
+	/*
+	 * Enable command queue (if supported)
+	 */
+	if (card->ext_csd.cmdq_support) {
+		if (host->caps2 & MMC_CAP2_CMD_QUEUE) {
+			card->ext_csd.cmdq_mode_en = 1;
+			pr_err("%s: Set ext_csd.cmdq_mode_en = %d\n", __func__, card->ext_csd.cmdq_mode_en);
+		} else {
+			card->ext_csd.cmdq_mode_en = 0;
+		}
+	}
+#else
+	card->ext_csd.cmdq_mode_en = 0;
+	pr_err("%s: Clear ext_csd.cmdq_mode_en = %d\n", __func__, card->ext_csd.cmdq_mode_en);
 
+#endif
+
+#if 0
+	/*
+	 * Enable Barrier feature (if supported)
+	 */
+	if (card->ext_csd.cache_flush_barrier && (host->caps2 & MMC_CAP2_CACHE_FLUSH_BARRIER)) {
+		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+				EXT_CSD_BARRIER_CTRL, 1,
+				card->ext_csd.generic_cmd6_time);
+		if (err && err != -EBADMSG)
+			goto free_card;
+		if (err) {
+			pr_warning("%s: Enabling cache flush barrier failed\n",
+				   mmc_hostname(card->host));
+			err = 0;
+			card->ext_csd.cache_flush_barrier_en = 0;
+		} else {
+			card->ext_csd.cache_flush_barrier_en = 1;
+			pr_err("%s: cache_flush_barrier_en=%d\n", __func__, card->ext_csd.cache_flush_barrier_en);
+		}
+	}
+
+	/*
+	 * Enable BKOPS AUTO  feature (if supported)
+	 */
+	if ((host->caps2 & MMC_CAP2_BKOPS_AUTO_CTRL) && (host->pm_flags & MMC_PM_KEEP_POWER) && card->ext_csd.bkops && (card->ext_csd.rev >= 8)) {
+		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+				EXT_CSD_BKOPS_EN, EXT_CSD_BKOPS_AUTO_EN,
+				card->ext_csd.generic_cmd6_time);
+		if (err && err != -EBADMSG)
+			goto free_card;
+		if (err) {
+			pr_warning("%s: BKOPS_AUTO_EN failed\n",
+				   mmc_hostname(card->host));
+			err = 0;
+			card->ext_csd.bkops_auto_en = 0;
+		} else {
+			card->ext_csd.bkops_auto_en = 1;
+			pr_err("%s: support BKOPS_AUTO_EN, bkops_auto_en=%d\n", __func__, card->ext_csd.bkops_auto_en);
+		}
+	}
+#endif
 	if (!oldcard)
 		host->card = card;
 
