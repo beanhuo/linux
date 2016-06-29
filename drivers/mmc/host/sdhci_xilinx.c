@@ -1813,8 +1813,6 @@ static const struct mmc_host_ops xilinx_ops = {
 #ifdef CONFIG_MMC_CQ_HCI
 void sdhci_cmdq_reset(struct mmc_host *mmc, u8 mask)
 {
-	struct sdhci_host *host = mmc_priv(mmc);
-	//sdhci_reset(host, mask);
 	xilinx_reset_host(mmc);
 }
 #if 0
@@ -1981,27 +1979,35 @@ static int sdhci_cmdq_discard_task(struct mmc_host *mmc, u32 tag, bool entire)
 		return -EIO;
 	}
 #endif
+return 0;
 }
 
 static int sdhci_cmdq_tuning_move(struct mmc_host *mmc, int is_move_strobe, int flag)
 {
-	//struct sdhci_host *host = mmc_priv(mmc);
+#if 0 //Micron HW CMDQ not support
+	struct sdhci_host *host = mmc_priv(mmc);
 
-	//return host->ops->tuning_move(host, is_move_strobe, flag);
+	return host->ops->tuning_move(host, is_move_strobe, flag);
+#endif
+return 0;
 }
 
 static void sdhci_cmdq_set_data_timeout(struct mmc_host *mmc, u32 val)
 {
-	//struct sdhci_host *host = mmc_priv(mmc);
+#if 0 //Micron HW CMDQ not support
+	struct sdhci_host *host = mmc_priv(mmc);
 
-	//sdhci_writeb(host, val, SDHCI_TIMEOUT_CONTROL);
+	sdhci_writeb(host, val, SDHCI_TIMEOUT_CONTROL);
+#endif
 }
 
 static void sdhci_cmdq_dump_vendor_regs(struct mmc_host *mmc)
 {
-	//struct sdhci_host *host = mmc_priv(mmc);
+#if 0 //Micron HW CMDQ not support
+	struct sdhci_host *host = mmc_priv(mmc);
 
-	//sdhci_dumpregs(host);
+	sdhci_dumpregs(host);
+#endif
 }
 
 static int sdhci_cmdq_init(struct cmdq_host	*cmdqh, struct mmc_host *mmc,
@@ -2055,7 +2061,7 @@ static int sdhci_cmdq_init(struct cmdq_host	*cmdqh, struct mmc_host *mmc,
 #endif
 static int sdhci_card_busy_data0(struct mmc_host *mmc)
 {
-#if 0
+#if 0  //Micron eMMC not support
 	struct sdhci_host *host = mmc_priv(mmc);
 	u32 present_state;
 
@@ -2066,7 +2072,6 @@ static int sdhci_card_busy_data0(struct mmc_host *mmc)
 
 	return !(present_state & SDHCI_DATA_0_LVL_MASK);
 #endif
-    mdelay(100);
 	return 0;
 }
 
@@ -2076,7 +2081,7 @@ static const struct cmdq_host_ops zed_cmdq_specail_ops = {
 	//.clear_set_irqs = sdhci_cmdq_clear_set_irqs,
 	.set_data_timeout = sdhci_cmdq_set_data_timeout,
 	.dump_vendor_regs = sdhci_cmdq_dump_vendor_regs,
-	.card_busy = sdhci_card_busy_data0,
+	//.card_busy = sdhci_card_busy_data0,
 	.discard_task = sdhci_cmdq_discard_task,
 	//.tuning_move = sdhci_cmdq_tuning_move,
 };
