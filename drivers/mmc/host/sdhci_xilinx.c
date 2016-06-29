@@ -15,6 +15,9 @@
 #include <linux/types.h>
 #include <linux/jiffies.h>
 
+#include <linux/mmc/cmdq_hci.h>
+
+
 /**********************************************************************
  * Register address mapping
  **********************************************************************/
@@ -225,6 +228,7 @@ struct xilinx_emmc_host {
 	void __iomem *cmd_reg;
 	void __iomem *wr_reg;
 	void __iomem *rd_reg;
+	void __iomem *cmdq_reg;
 	int irq;
 
 	spinlock_t lock;	/* Mutex */
@@ -235,6 +239,24 @@ struct xilinx_emmc_host {
 	struct xilinx_emmc_regs regs;
 	int flag;
 	int rca;
+	struct cmdq_host	*cq_host;
+	int flags;		/* Host attributes */
+#define SDHCI_USE_SDMA		(1<<0)	/* Host is SDMA capable */
+#define SDHCI_USE_ADMA		(1<<1)	/* Host is ADMA capable */
+#define SDHCI_REQ_USE_DMA	(1<<2)	/* Use DMA for this req. */
+#define SDHCI_DEVICE_DEAD	(1<<3)	/* Device unresponsive */
+#define SDHCI_SDR50_NEEDS_TUNING (1<<4)	/* SDR50 needs tuning */
+#define SDHCI_NEEDS_RETUNING	(1<<5)	/* Host needs retuning */
+#define SDHCI_AUTO_CMD12	(1<<6)	/* Auto CMD12 support */
+#define SDHCI_AUTO_CMD23	(1<<7)	/* Auto CMD23 support */
+#define SDHCI_PV_ENABLED	(1<<8)	/* Preset value enabled */
+#define SDHCI_SDIO_IRQ_ENABLED	(1<<9)	/* SDIO irq enabled */
+#define SDHCI_SDR104_NEEDS_TUNING (1<<10)	/* SDR104/HS200 needs tuning */
+#define SDHCI_USING_RETUNING_TIMER (1<<11)	/* Host is using a retuning timer for the card */
+#define SDHCI_USE_64_BIT_DMA	(1<<12)	/* Use 64-bit DMA */
+#define SDHCI_HS400_TUNING	(1<<13)	/* Tuning for HS400 */
+#define SDHCI_EXE_SOFT_TUNING	(1<<14)	/* Host execute soft tuning */
+
 };
 
 /* Rewrite some kernel API to avoid use 'mmc_card' */
@@ -676,12 +698,12 @@ static int xilinx_reset_host(struct mmc_host *mmc)
 	mdelay(1);
 	writel(CFG_BUS_WIDTH_X1, misc_reg + EMMC_CFG);
 
-	xilinx_set_clk(mmc, 25);
+	xilinx_set_clk(mmc, 100);
 	xilinx_set_cmd_phase(mmc, 1);
 	xilinx_set_rd_phase(mmc, 0);
 	xilinx_set_wr_phase(mmc, 0);
 
-	dev_info(mmc_dev(host->mmc), "==========> reset host finished. 400 KHz CLK freq,  x1 bus width.\n");
+	dev_info(mmc_dev(host->mmc), "==========> reset host finished.\n");
 
 	return 0;
 }
@@ -852,8 +874,7 @@ int xilinx_set_rd_phase(struct mmc_host *mmc, int phase)
 
 	writel(value | (phase << 18), misc_reg + EMMC_CLOCK);
 
-	while (!(readl(misc_reg + EMMC_CLOCK) & CLOCK_PLL_LOCKED))
-		;
+	while (!(readl(misc_reg + EMMC_CLOCK) & CLOCK_PLL_LOCKED));
 
 	return 0;
 }
@@ -1683,6 +1704,20 @@ finish_request:
 	host->data = NULL;
 }
 
+#ifdef CONFIG_MMC_CQ_HCI
+static irqreturn_t sdhci_cmdq_irq(struct mmc_host *mmc, u32 intmask)
+{
+	return cmdq_irq(mmc, intmask);
+}
+
+#else
+static irqreturn_t sdhci_cmdq_irq(struct mmc_host *mmc, u32 intmask)
+{
+	pr_err("%s: rxd cmdq-irq when disabled !!!!\n", mmc_hostname(mmc));
+	return IRQ_NONE;
+}
+#endif
+
 static irqreturn_t xilinx_irq(int irq, void *dev)
 {
 	struct xilinx_emmc_host *host = (struct xilinx_emmc_host *)dev;
@@ -1691,16 +1726,32 @@ static irqreturn_t xilinx_irq(int irq, void *dev)
 	uint8_t *wr_reg = host->wr_reg;
 	uint8_t *rd_reg = host->rd_reg;
 
+
 	uint32_t cmd_sr = 0;
 	uint32_t wr_sr = 0;
 	uint32_t rd_sr = 0;
+	uint32_t cmdq_sr = 0;
 
 	unsigned long flags;
 
 	dev_dbg(mmc_dev(host->mmc), ">>>>>>>>>>>>> ISR IN  <<<<<<<<<<<\n");
 
+//	printk("====>%s:  interrupte! \n", __func__);
+
 	spin_lock_irqsave(&host->lock, flags);
 
+#ifdef CONFIG_MMC_CQ_HCI
+
+	
+	if (host->mmc->card  && (host->cq_host && host->cq_host->enabled)) {
+		pr_debug("*** %s: cmdq intr: 0x%08x\n", mmc_hostname(host->mmc),
+				cmdq_sr);
+		//result = 
+			sdhci_cmdq_irq(host->mmc, cmdq_sr);
+		//writel(cmdq_sr, CQTCN);
+		goto irq_out;
+	}
+#endif
 	cmd_sr = readl(cmd_reg + EMMC_CMD_SR);
 	wr_sr = readl(wr_reg + EMMC_WR_SR);
 	rd_sr = readl(rd_reg + EMMC_RD_SR);
@@ -1738,6 +1789,8 @@ static irqreturn_t xilinx_irq(int irq, void *dev)
 	}
 
 irq_out:
+//printk("====>%s:  interrupt done! \n", __func__);
+
 	dev_dbg(mmc_dev(host->mmc), ">>>>>>>>>>>>> ISR OUT <<<<<<<<<<<\n");
 	spin_unlock_irqrestore(&host->lock, flags);
 	return IRQ_HANDLED;
@@ -1755,6 +1808,279 @@ static const struct mmc_host_ops xilinx_ops = {
 };
 
 
+
+
+#ifdef CONFIG_MMC_CQ_HCI
+void sdhci_cmdq_reset(struct mmc_host *mmc, u8 mask)
+{
+	struct sdhci_host *host = mmc_priv(mmc);
+	//sdhci_reset(host, mask);
+	xilinx_reset_host(mmc);
+}
+#if 0
+static void sdhci_cmdq_clean_irqs(struct mmc_host *mmc, u32 clean)
+{
+	struct sdhci_host *host = mmc_priv(mmc);
+	sdhci_writel(host, clean, SDHCI_INT_STATUS);
+}
+
+
+static u32 sdhci_cmdq_clear_set_irqs(struct mmc_host *mmc, u32 clear, u32 set)
+{
+	struct sdhci_host *host = mmc_priv(mmc);
+	u32 val, ret = 0;
+#if 0
+	host->ier = SDHCI_INT_CMDQ_EN | SDHCI_INT_ERROR_MASK;
+	sdhci_writel(host, host->ier, SDHCI_INT_ENABLE);
+	sdhci_writel(host, host->ier, SDHCI_SIGNAL_ENABLE);
+#else
+	ret = sdhci_readl(host, SDHCI_INT_ENABLE);
+	val = ret & ~clear;
+	val |= set;
+	sdhci_writel(host, val,
+			SDHCI_INT_ENABLE);
+	sdhci_writel(host, val,
+			SDHCI_SIGNAL_ENABLE);
+#endif
+	return ret;
+}
+#endif
+
+static int sdhci_cmdq_discard_task(struct mmc_host *mmc, u32 tag, bool entire)
+{
+#if 0
+	struct sdhci_host *host = mmc_priv(mmc);
+	u32 mask, arg, opcode, val, val1, val2, mode;
+	int flags;
+	unsigned long timeout;
+
+	sdhci_reset(host, SDHCI_RESET_CMD | SDHCI_RESET_DATA);
+
+	timeout = 10;
+	mask = SDHCI_CMD_INHIBIT;
+
+	while (sdhci_readl(host, SDHCI_PRESENT_STATE) & mask) {
+		if (timeout == 0) {
+			pr_err("%s: sdhci never released "
+				"inhibit bit(s).\n", __func__);
+			sdhci_dumpregs(host);
+			return -EIO;
+		}
+		timeout--;
+		mdelay(1);
+	}
+
+	/* set trans mode reg */
+	mode = sdhci_readw(host, SDHCI_TRANSFER_MODE);
+	if (host->quirks2 & SDHCI_QUIRK2_CLEAR_TRANSFERMODE_REG_BEFORE_CMD) {
+		sdhci_writew(host, 0x0, SDHCI_TRANSFER_MODE);
+	} else {
+		/* clear Auto CMD settings for no data CMDs */
+		val = mode & ~(SDHCI_TRNS_AUTO_CMD12 | SDHCI_TRNS_AUTO_CMD23);
+		sdhci_writew(host, val, SDHCI_TRANSFER_MODE);
+	}
+
+	/* enable interupt status, */
+	/* but not let the interupt be indicated to system */
+	val1 = sdhci_readl(host, SDHCI_INT_ENABLE);
+	val = val1 | SDHCI_INT_RESPONSE | SDHCI_INT_ERROR_MASK;
+	sdhci_writel(host, val, SDHCI_INT_ENABLE);
+	val2 = sdhci_readl(host, SDHCI_SIGNAL_ENABLE);
+	val = val2 & ~(SDHCI_INT_RESPONSE | SDHCI_INT_ERROR_MASK);
+	sdhci_writel(host, val, SDHCI_SIGNAL_ENABLE);
+
+	/* send cmd12 */
+	arg = 0;
+	sdhci_writel(host, arg, SDHCI_ARGUMENT);
+
+	opcode = MMC_STOP_TRANSMISSION;
+	flags = SDHCI_CMD_RESP_SHORT | SDHCI_CMD_CRC |
+			SDHCI_CMD_INDEX | SDHCI_CMD_ABORTCMD;
+	sdhci_writew(host, SDHCI_MAKE_CMD(opcode, flags), SDHCI_COMMAND);
+
+	timeout = 10;
+	mask = SDHCI_INT_RESPONSE | SDHCI_INT_ERROR_MASK;
+
+	while (0 == (mask & (val = sdhci_readl(host, SDHCI_INT_STATUS)))) {
+		if (timeout == 0) {
+			pr_err("%s: send cmd%d timeout\n", __func__, opcode);
+			sdhci_dumpregs(host);
+			break;
+		}
+		timeout--;
+		mdelay(1);
+	}
+
+	if (val & SDHCI_INT_ERROR_MASK) {
+		pr_err("%s: send cmd%d err val = 0x%x\n", __func__,opcode,  val);
+		sdhci_dumpregs(host);
+	}
+	/* clean interupt*/
+	sdhci_writel(host, val, SDHCI_INT_STATUS);
+
+	/* wait busy */
+	timeout = 1000;
+	while (host->cq_host->ops->card_busy(mmc)) {
+		if (timeout == 0) {
+			pr_err("%s: wait busy timeout after stop\n", __func__);
+			sdhci_dumpregs(host);
+			break;
+		}
+		timeout--;
+		mdelay(1);
+	}
+
+	sdhci_reset(host, SDHCI_RESET_CMD | SDHCI_RESET_DATA);
+	/* send cmd48 */
+	/* CMD48 arg:
+	[31:21] reserved
+	[20:16]: TaskID
+	[15:4]: reserved
+	[3:0] TM op-code
+	*/
+	if (true == entire)
+		arg = 1;
+	else
+		arg = 2 | tag << 16;
+	sdhci_writel(host, arg, SDHCI_ARGUMENT);
+
+	opcode = MMC_CMDQ_TASK_MGMT;
+	flags = SDHCI_CMD_RESP_SHORT | SDHCI_CMD_CRC | SDHCI_CMD_INDEX;
+	sdhci_writew(host, SDHCI_MAKE_CMD(opcode, flags), SDHCI_COMMAND);
+
+	timeout = 10;
+	mask = SDHCI_INT_RESPONSE | SDHCI_INT_ERROR_MASK;
+
+	while (0 == (mask & (val = sdhci_readl(host, SDHCI_INT_STATUS)))) {
+		if (timeout == 0) {
+			pr_err("%s: send cmd%d timeout\n", __func__, opcode);
+			sdhci_dumpregs(host);
+			break;
+		}
+		timeout--;
+		mdelay(1);
+	}
+
+	if (val & SDHCI_INT_ERROR_MASK) {
+		pr_err("%s: send cmd%d err val = 0x%x\n", __func__, opcode, val);
+		sdhci_dumpregs(host);
+	}
+	/* clean interupt*/
+	sdhci_writel(host, val, SDHCI_INT_STATUS);
+
+	/* recovery interupt enable & mask */
+	sdhci_writel(host, val1, SDHCI_INT_ENABLE);
+	sdhci_writel(host, val2, SDHCI_SIGNAL_ENABLE);
+	/* recovery trans mode */
+	sdhci_writew(host, mode, SDHCI_TRANSFER_MODE);
+
+	if (val & SDHCI_INT_RESPONSE) {
+		return 0;
+	} else {
+		pr_err("%s: discard cmdq fail\n", __func__);
+		return -EIO;
+	}
+#endif
+}
+
+static int sdhci_cmdq_tuning_move(struct mmc_host *mmc, int is_move_strobe, int flag)
+{
+	//struct sdhci_host *host = mmc_priv(mmc);
+
+	//return host->ops->tuning_move(host, is_move_strobe, flag);
+}
+
+static void sdhci_cmdq_set_data_timeout(struct mmc_host *mmc, u32 val)
+{
+	//struct sdhci_host *host = mmc_priv(mmc);
+
+	//sdhci_writeb(host, val, SDHCI_TIMEOUT_CONTROL);
+}
+
+static void sdhci_cmdq_dump_vendor_regs(struct mmc_host *mmc)
+{
+	//struct sdhci_host *host = mmc_priv(mmc);
+
+	//sdhci_dumpregs(host);
+}
+
+static int sdhci_cmdq_init(struct cmdq_host	*cmdqh, struct mmc_host *mmc,
+			   bool dma64)
+{
+	return cmdq_init(cmdqh, mmc, dma64);
+}
+
+#else
+void sdhci_cmdq_reset(struct mmc_host *mmc, u8 mask)
+{
+
+}
+
+static void sdhci_cmdq_clean_irqs(struct mmc_host *mmc, u32 clean)
+{
+
+}
+
+static u32 sdhci_cmdq_clear_set_irqs(struct mmc_host *mmc, u32 clear, u32 set)
+{
+	return 0;
+}
+
+static int sdhci_cmdq_discard_task(struct mmc_host *mmc, u32 tag, bool entire)
+{
+	return 0;
+}
+
+static int sdhci_cmdq_tuning_move(struct mmc_host *mmc, int is_move_strobe, int flag)
+{
+	return 0;
+}
+
+static void sdhci_cmdq_set_data_timeout(struct mmc_host *mmc, u32 val)
+{
+
+}
+
+static void sdhci_cmdq_dump_vendor_regs(struct mmc_host *mmc)
+{
+
+}
+
+static int sdhci_cmdq_init(struct cmdq_host	*cmdqh, struct mmc_host *mmc,
+			   bool dma64)
+{
+	return -ENOSYS;
+}
+
+#endif
+static int sdhci_card_busy_data0(struct mmc_host *mmc)
+{
+#if 0
+	struct sdhci_host *host = mmc_priv(mmc);
+	u32 present_state;
+
+	sdhci_runtime_pm_get(host);
+	/* Check whether DAT[3:0] is 0000 */
+	present_state = sdhci_readl(host, SDHCI_PRESENT_STATE);
+	sdhci_runtime_pm_put(host);
+
+	return !(present_state & SDHCI_DATA_0_LVL_MASK);
+#endif
+    mdelay(100);
+	return 0;
+}
+
+static const struct cmdq_host_ops zed_cmdq_specail_ops = {
+	.reset = sdhci_cmdq_reset,
+	//.clean_irqs = sdhci_cmdq_clean_irqs,
+	//.clear_set_irqs = sdhci_cmdq_clear_set_irqs,
+	.set_data_timeout = sdhci_cmdq_set_data_timeout,
+	.dump_vendor_regs = sdhci_cmdq_dump_vendor_regs,
+	.card_busy = sdhci_card_busy_data0,
+	.discard_task = sdhci_cmdq_discard_task,
+	//.tuning_move = sdhci_cmdq_tuning_move,
+};
+
 static int xilinx_emmc_probe(struct platform_device *pdev)
 {
 	struct device *dev = &(pdev->dev);
@@ -1763,17 +2089,25 @@ static int xilinx_emmc_probe(struct platform_device *pdev)
 	struct resource *res2;
 	struct resource *res3;
 	struct resource *res4;
+	struct resource *res5;
 	struct mmc_host *mmc;
 	struct xilinx_emmc_host *host;
 	int ret = 0;
-
+	bool dma64;
+#ifdef CONFIG_MMC_CQ_HCI
+	bool cmdq_fix_qbr = false;
+#endif
 	res0 = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	res1 = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 	res2 = platform_get_resource(pdev, IORESOURCE_MEM, 2);
 	res3 = platform_get_resource(pdev, IORESOURCE_MEM, 3);
 	res4 = platform_get_resource(pdev, IORESOURCE_MEM, 4);
+	res5 = platform_get_resource(pdev, IORESOURCE_MEM, 5);
 
-	if (!res0 || !res1 || !res2 || !res3 || !res4) {
+	printk("=====>: dma_reg: %x, misc_reg: %x, cmd_reg: %x, wr_reg: %x, rd_reg: %x, cmdq_reg: 0x%x.\n",
+		res0->start, res1->start, res2->start, res3->start, res4->start, res5->start);
+
+	if (!res0 || !res1 || !res2 || !res3 || !res4 || !res5) {
 		dev_err(dev, "no memory specified\n");
 		return -ENOENT;
 	}
@@ -1794,10 +2128,14 @@ static int xilinx_emmc_probe(struct platform_device *pdev)
 	mmc->caps |= MMC_CAP_CMD23;
 	/* when set, mmc_cmd has MMC_RSP_CRC flag and mmc_resp_type() need it. */
 	mmc->caps |= MMC_CAP_WAIT_WHILE_BUSY;
-	mmc->caps2 = MMC_CAP2_HS200 | MMC_CAP2_HS400;
 
+   mmc->caps2 = MMC_CAP2_HS200 | MMC_CAP2_HS400;
+
+    //mmc->caps2 = MMC_CAP2_HS200;
+    
 	mmc->caps2 |= MMC_CAP2_HS200_1_8V_SDR | MMC_CAP2_HS200_1_2V_SDR;
 	mmc->caps2 |= MMC_CAP2_HS400_1_8V | MMC_CAP2_HS400_1_2V;
+	mmc->caps2 |= MMC_CAP2_CMD_QUEUE;
 
 	mmc->max_blk_size  = 512;
 	mmc->max_blk_count = 2 * 1024 * 10;
@@ -1819,24 +2157,22 @@ static int xilinx_emmc_probe(struct platform_device *pdev)
 	spin_lock_init(&host->lock);
 	setup_timer(&host->timer, xilinx_timeout_timer, (unsigned long)host);
 
-	dev_info(mmc_dev(host->mmc), "=====>: dma_reg: %x, misc_reg: %x, cmd_reg: %x, wr_reg: %x, rd_reg: %x\n",
-		res0->start, res1->start, res2->start, res3->start, res4->start);
 	host->dma_reg  = ioremap(res0->start, resource_size(res0));
 	host->misc_reg = ioremap(res1->start, resource_size(res1));
 	host->cmd_reg  = ioremap(res2->start, resource_size(res2));
 	host->wr_reg   = ioremap(res3->start, resource_size(res3));
 	host->rd_reg   = ioremap(res4->start, resource_size(res4));
-
-	if (!host->dma_reg || !host->misc_reg || !host->cmd_reg || !host->wr_reg || !host->rd_reg) {
+	host->cmdq_reg = ioremap(res5->start, resource_size(res5));
+	if (!host->dma_reg || !host->misc_reg || !host->cmd_reg ||
+		!host->wr_reg || !host->rd_reg || !host->cmdq_reg) {
 		dev_err(dev, "memory map error!\n");
 		return -ENOMEM;
 	}
-
 	dev_info(mmc_dev(host->mmc), "==========> fpga_version [%08x]\n", readl(host->misc_reg + EMMC_VERSION));
 	dev_info(mmc_dev(host->mmc), "==========> driv_version [%s]\n",   XILINX_EMMC_DRV_VERSION);
 
 	host->irq = platform_get_irq(pdev, 0);
-	ret = request_irq(host->irq, xilinx_irq, IRQF_DISABLED, mmc_hostname(mmc), host);
+	ret = request_irq(host->irq, xilinx_irq, IRQF_DISABLED|IRQF_SHARED, mmc_hostname(mmc), host);
 	if (ret) {
 		dev_err(dev, "request_irq failed %d", ret);
 		return ret;
@@ -1853,8 +2189,38 @@ static int xilinx_emmc_probe(struct platform_device *pdev)
 	xilinx_emmc_power_on(mmc, 33, OP_VCC);
 	xilinx_emmc_power_on(mmc, 18, OP_VCCq);
 
-
 	mmc_add_host(mmc);
+
+#ifdef CONFIG_MMC_CQ_HCI
+		if (host->mmc->caps2 &	MMC_CAP2_CMD_QUEUE) {
+
+			host->cq_host = kzalloc(sizeof(struct cmdq_host), GFP_KERNEL);
+				if (!host->cq_host) {
+					dev_err(&pdev->dev, "allocate memory for CMDQ fail\n");
+					return ERR_PTR(-ENOMEM);
+				}
+			if (IS_ERR(host->cq_host)) {
+				ret = PTR_ERR(host->cq_host);
+				dev_err(&pdev->dev, "cmd queue platform init failed (%u)\n", ret);
+				host->mmc->caps2 &= ~MMC_CAP2_CMD_QUEUE;
+			} else {
+				host->cq_host->mmio = host->cmdq_reg;			
+				host->cq_host->fix_qbr = cmdq_fix_qbr;
+			}
+		}
+	if (mmc->caps2 &  MMC_CAP2_CMD_QUEUE) {
+		dma64 = (host->flags & SDHCI_USE_64_BIT_DMA) ?
+			true : false;
+		host->cq_host->mmc = mmc;
+		ret = sdhci_cmdq_init(host->cq_host, mmc, dma64);
+		if (ret)
+			pr_err("%s: CMDQ init: failed (%d)\n",
+			       mmc_hostname(host->mmc), ret);
+		else
+			host->cq_host->ops = &zed_cmdq_specail_ops;
+	}
+#endif
+//	mmc_add_host(mmc);
 
 	return 0;
 }
