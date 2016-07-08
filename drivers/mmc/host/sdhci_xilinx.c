@@ -1738,20 +1738,16 @@ static irqreturn_t xilinx_irq(int irq, void *dev)
 
 //	printk("====>%s:  interrupte! \n", __func__);
 
-	spin_lock_irqsave(&host->lock, flags);
-
 #ifdef CONFIG_MMC_CQ_HCI
-
-	
 	if (host->mmc->card  && (host->cq_host && host->cq_host->enabled)) {
 		pr_debug("*** %s: cmdq intr: 0x%08x\n", mmc_hostname(host->mmc),
 				cmdq_sr);
 		//result = 
-			sdhci_cmdq_irq(host->mmc, cmdq_sr);
+		return sdhci_cmdq_irq(host->mmc, cmdq_sr);
 		//writel(cmdq_sr, CQTCN);
-		goto irq_out;
 	}
 #endif
+	spin_lock_irqsave(&host->lock, flags);
 	cmd_sr = readl(cmd_reg + EMMC_CMD_SR);
 	wr_sr = readl(wr_reg + EMMC_WR_SR);
 	rd_sr = readl(rd_reg + EMMC_RD_SR);
