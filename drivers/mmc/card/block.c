@@ -2087,7 +2087,7 @@ static int mmc_blk_cmdq_wait_for_dcmd(struct mmc_host *host,
 	printk("====>%s:%d is run.\n", __func__, __LINE__);
 
 	init_completion(&mrq->cmdq_completion);
-	mrq->done = mmc_blk_cmdq_dcmd_done;
+	mrq->done = mmc_blk_cmdq_req_done;//mmc_blk_cmdq_dcmd_done;
 	mrq->host = host;
 	mmc_start_cmdq_request(host, mrq);
 	ret = wait_for_completion_timeout(&mrq->cmdq_completion,
@@ -2533,9 +2533,6 @@ void mmc_blk_cmdq_complete_rq(struct request *rq)
 void mmc_blk_cmdq_req_done(struct mmc_request *mrq)
 {
 	struct request *req = mrq->req;
-
-	//blk_end_request(req, 0, brq->data.bytes_xfered);
-
 	blk_complete_request(req);
 }
 EXPORT_SYMBOL(mmc_blk_cmdq_req_done);
