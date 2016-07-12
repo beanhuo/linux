@@ -50,6 +50,7 @@ extern void sdhci_cmdq_dsm_work(struct cmdq_host *cq_host, bool dsm);
 #endif
 static int cmdq_finish_data(struct mmc_host *mmc, unsigned int tag);
 //static void testing_simple(struct cmdq_host *cq_host, u8 tag);
+static int count[32];//just used for debug
 
 static void cmdq_dumpregs(struct cmdq_host *cq_host)
 {
@@ -83,6 +84,11 @@ static void cmdq_dumpregs(struct cmdq_host *cq_host)
     pr_info(DRV_NAME ": CQCRI  0x%08x, CQCRA 0x%08x.\n",
 		cmdq_readl(cq_host, CQCRI),cmdq_readl(cq_host, CQCRA));
 
+    pr_info(DRV_NAME ": unfinished task info:\n");
+
+    int fuck;
+    for(fuck = 0; fuck < 32; fuck++)
+    printk("tag[%d] %d,", fuck,count[fuck]);
 	pr_info(DRV_NAME ": ===========================================\n");
 }
 
@@ -660,14 +666,13 @@ static void zed_cmdq_prep_Dcmdq(struct mmc_host *mmc,
 	pr_debug("%s: DCMD->opcode: %d, arg: 0x%x, resp_type = %d\n", __func__,
 		mrq->cmd->opcode, mrq->cmd->arg, resp_type);
 		
-	///cmdq_writel(cq_host,mrq->cmd->arg << 16,CQDESC); //buffer address
     cmdq_writel(cq_host,mrq->cmd->arg,CQDESC);
 	data32 = ((u32)resp_type << 23) + ((u32)mrq->cmd->opcode << 16) + 4;
 	cmdq_writel(cq_host,data32,CQDESC); //data length
 	
 	cmdq_writel(cq_host,31,CQTID);
 
-	//printk("====> Dcmdq is CMD%d.\n",mrq->cmd->opcode);
+
 	if (cq_host->ops->set_data_timeout)
 	    cq_host->ops->set_data_timeout(mmc, 0xf);
 }
@@ -726,7 +731,6 @@ static void cmdq_prep_dcmd_desc(struct mmc_host *mmc,
 		cq_host->ops->set_data_timeout(mmc, 0xf);
 }
 #endif
-	static u32 count[32];
 static int cmdq_request(struct mmc_host *mmc, struct mmc_request *mrq)
 {
 	int err = 0;
@@ -741,22 +745,18 @@ static int cmdq_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		err = -EINVAL;
 		goto out;
 	}
-    //udelay(500);
+
 	cmdq_runtime_pm_get(mmc);
-
 	spin_lock_irqsave(&cq_host->cmdq_lock, flags);
-
 	if (mrq->cmdq_req->cmdq_req_flags & DCMD) {
 		pr_debug("%s: DCMD mrq\n", __func__);
-count[31]++;
 		zed_cmdq_prep_Dcmdq(mmc, mrq);
 		if (cq_host->mrq_slot[31])
 			BUG_ON(1);
-		
 		cq_host->mrq_slot[31] = mrq;
-		
-		mod_timer(&cq_host->timer[31], jiffies + msecs_to_jiffies(CMDQ_TASK_TIMEOUT_MS));
-
+		count[31]++;
+		mod_timer(&cq_host->timer[31],
+		jiffies + msecs_to_jiffies(CMDQ_TASK_TIMEOUT_MS));
 		//if (false == cq_host->err_handle)
 		while (1) {
 			cmdq_writel(cq_host, 1 << 31, CQTDBR);
@@ -769,7 +769,7 @@ count[31]++;
 		return 0;
 	}
 	
-#if 1
+#if 0
   do{
         int temp = cmdq_readl(cq_host, CQTDBR);
         if(temp & (1 << tag)){
@@ -780,11 +780,10 @@ count[31]++;
         break;
     }while(1);
 #endif   
-count[tag]++;
 	mm_log_print(NULL, "REQ: Trigger tag: %2d\n", tag);
 	zed_cmdq_prep(cq_host, mrq, 1,
 	(mrq->cmdq_req->cmdq_req_flags & QBR), tag);
-    
+#if 0
         int DBR = cmdq_readl(cq_host, CQTDBR);
         if (DBR & (1<<tag)) {
            printk("====>CQTDBR 0x%x is not clear,tag %d, Fuck !!!.\n", DBR,tag);
@@ -792,19 +791,16 @@ count[tag]++;
        if (cq_host->mrq_slot[tag]) 
          printk("%d CMDQ slot %d is not empty.!!!\n.\n", tag);
          int fuck;
-         for (fuck = 0; fuck < 32 ;fuck++)
-         printk("slot[%d]:%d ",fuck, count[fuck]);
-       BUG_ON(DBR & (1 << tag));
+        BUG_ON(DBR & (1 << tag));
         }
-        
-    //BUG_ON(cmdq_readl(cq_host, CQTDBR) & (1 << tag));
-
+#endif
+    count[tag]++;
+    BUG_ON(cmdq_readl(cq_host, CQTDBR) & (1 << tag));
 	if (cq_host->mrq_slot[tag]) {
 		pr_err("%s:%d CMDQ slot %d is not empty.!!!\n",
 		    mmc_hostname(mmc), __LINE__, tag);
 		BUG_ON(1);
     }
-
 	cq_host->mrq_slot[tag] = mrq;
 	mod_timer(&cq_host->timer[tag], jiffies + msecs_to_jiffies(CMDQ_TASK_TIMEOUT_MS));
 
@@ -823,12 +819,9 @@ count[tag]++;
 		if (tmp & (1 << tag))
 			break;
 		mb();
-		//pr_err("%s: set CQTDBR failed, retry\n", __func__);
+		pr_err("%s: set CQTDBR failed, retry\n", __func__);
 	}
 	spin_unlock_irqrestore(&cq_host->cmdq_lock, flags);
-
-	//return 0;
-
 out:
 	return err;
 }
@@ -1029,10 +1022,7 @@ irqreturn_t cmdq_irq(struct mmc_host *mmc, u32 intmask)
 
 	status = cmdq_readl(cq_host, CQIS);
 	cmdq_writel(cq_host, status, CQIS);
-	//printk("====>CQIS is 0x%x.\n", status);
-	//printk("====>this is just testing interrupte, will return.\n");
-    //irqDone = 1;
-    //return IRQ_HANDLED;
+
 	BUG_ON(!in_interrupt());
 	 if (status & CQIS_RED) {
 #if 1
@@ -1136,7 +1126,7 @@ irqreturn_t cmdq_irq(struct mmc_host *mmc, u32 intmask)
 					break;
 				pr_err("%s: clear CQTCN failed, retry\n", __func__);
 			}
-#if 0			//BUG_ON(cmdq_readl(cq_host, CQTDBR) & comp_status);
+#if 0
    
         int DBR = cmdq_readl(cq_host, CQTDBR);
         if (DBR & comp_status) {
@@ -1544,15 +1534,12 @@ static void cmdq_timeout_timer(unsigned long param)
 	unsigned long flags;
 
 	spin_lock_irqsave(&cq_host->cmdq_lock, flags);
-         int fuck;
-         for (fuck = 0; fuck < 32 ;fuck++)
-         printk("slot[%d]:%d ",fuck, count[fuck]);
 	pr_err("%s: Timeout waiting for hardware interrupt.\n", __func__);
 	cmdq_dumpregs(cq_host);
 	if (false == cq_host->err_handle) {
 		cq_host->err_handle = true;
 		/* mask & disable error interupt */
-	//	cq_host->ops->clear_set_irqs(cq_host->mmc, 0xFFFFFFFF, SDHCI_INT_CMDQ_EN);
+	    //cq_host->ops->clear_set_irqs(cq_host->mmc, 0xFFFFFFFF, SDHCI_INT_CMDQ_EN);
 		//cmdq_clear_set_irqs(cq_host, CQIS_RED, 0x0);
 #ifdef CONFIG_HUAWEI_EMMC_DSM
 		sdhci_cmdq_dsm_set_host_status(mmc_priv(cq_host->mmc), -1U); // timeout
