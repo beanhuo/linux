@@ -163,7 +163,7 @@ extern void mmc_start_bkops(struct mmc_card *card, bool from_exception);
 extern int __mmc_switch(struct mmc_card *, u8, u8, u8, unsigned int, bool,
 			bool, bool);
 extern int mmc_switch(struct mmc_card *, u8, u8, u8, unsigned int);
-extern int __mmc_switch_cmdq_mode(struct mmc_command *cmd, u8 set, u8 index,
+extern int __mmc_prepare_switch_cmdq_mode(struct mmc_command *cmd, u8 set, u8 index,
 					u8 value, unsigned int timeout_ms,
 					bool use_busy_signal, bool ignore_timeout);
 extern int mmc_cmdq_halt(struct mmc_host *host, bool enable);

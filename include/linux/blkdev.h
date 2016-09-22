@@ -1140,6 +1140,8 @@ static inline bool blk_needs_flush_plug(struct task_struct *tsk)
  * tag stuff
  */
 extern int blk_queue_start_tag(struct request_queue *, struct request *);
+extern int blk_queue_tag_is_free(struct request_queue *q, struct request *rq);
+
 extern struct request *blk_queue_find_tag(struct request_queue *, int);
 extern void blk_queue_end_tag(struct request_queue *, struct request *);
 extern int blk_queue_init_tags(struct request_queue *, int, struct blk_queue_tag *, int);
