@@ -41,7 +41,7 @@ struct mmc_queue_req {
 	struct mmc_async_req	mmc_active;
 	enum mmc_packed_type	cmd_type;
 	struct mmc_packed	*packed;
-	struct mmc_cmdq_req	mmc_cmdq_req;
+	struct mmc_cmdq_req	cmdq_req_active;
 
 };
 

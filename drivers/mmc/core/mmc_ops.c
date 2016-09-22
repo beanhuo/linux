@@ -465,14 +465,14 @@ static inline void mmc_prepare_switch(struct mmc_command *cmd, u8 index,
 		cmd->flags |= MMC_RSP_SPI_R1 | MMC_RSP_R1;
 }
 
-int __mmc_switch_cmdq_mode(struct mmc_command *cmd, u8 set, u8 index, u8 value,
+int __mmc_prepare_switch_cmdq_mode(struct mmc_command *cmd, u8 set, u8 index, u8 value,
 			   unsigned int timeout_ms, bool use_busy_signal,
 			   bool ignore_timeout)
 {
 	mmc_prepare_switch(cmd, index, value, set, timeout_ms, use_busy_signal);
 	return 0;
 }
-EXPORT_SYMBOL(__mmc_switch_cmdq_mode);
+EXPORT_SYMBOL(__mmc_prepare_switch_cmdq_mode);
 
 
 /**

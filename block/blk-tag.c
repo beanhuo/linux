@@ -369,6 +369,7 @@ int blk_queue_start_tag(struct request_queue *q, struct request *rq)
 	 * We need lock ordering semantics given by test_and_set_bit_lock.
 	 * See blk_queue_end_tag for details.
 	 */
+	//printk("====>%s:%d max depth is %d, tag %d.\n", __func__, __LINE__, max_depth, tag);
 
 	bqt->next_tag = (tag + 1) % bqt->max_depth;
 	rq->cmd_flags |= REQ_QUEUED;
@@ -380,6 +381,39 @@ int blk_queue_start_tag(struct request_queue *q, struct request *rq)
 }
 EXPORT_SYMBOL(blk_queue_start_tag);
 
+
+int blk_queue_tag_is_free(struct request_queue *q, struct request *rq)
+{
+	struct blk_queue_tag *bqt = q->queue_tags;
+	unsigned max_depth;
+	int tag;
+	max_depth = bqt->max_depth;
+	if (!rq_is_sync(rq) && max_depth > 1) {
+		switch (max_depth) {
+		case 2:
+			max_depth = 1;
+			break;
+		case 3:
+			max_depth = 2;
+			break;
+		default:
+			max_depth -= 2;
+		}
+		if (q->in_flight[BLK_RW_ASYNC] > max_depth)
+			return 1;
+	}
+	do {
+			tag = find_first_bit(bqt->tag_map, max_depth);
+			if (tag >= max_depth)
+				return 1;
+			else
+			    return 0;
+
+	} while (1);
+
+	return 0;
+}
+EXPORT_SYMBOL(blk_queue_tag_is_free);
 /**
  * blk_queue_invalidate_tags - invalidate all pending tags
  * @q:  the request queue for the device

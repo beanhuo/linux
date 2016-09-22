@@ -26,8 +26,8 @@
 #include <linux/mmc/slot-gpio.h>
 #include <linux/mmc/cmdq_hci.h>
 #include <linux/pm_runtime.h>
-#include "sdhci.h"
-
+//#include "sdhci.h"
+#include <linux/mmc/cmdq_hci.h>
 /* 1 sec FIXME: optimize it */
 #define HALT_TIMEOUT_MS 1000
 #define CLEAR_TIMEOUT_MS 1000
@@ -51,6 +51,8 @@ extern void sdhci_cmdq_dsm_work(struct cmdq_host *cq_host, bool dsm);
 static int cmdq_finish_data(struct mmc_host *mmc, unsigned int tag);
 //static void testing_simple(struct cmdq_host *cq_host, u8 tag);
 static int count[32];//just used for debug
+static int count1[32];//just used for task count
+static int lastTask;
 
 static void cmdq_dumpregs(struct cmdq_host *cq_host)
 {
@@ -84,11 +86,17 @@ static void cmdq_dumpregs(struct cmdq_host *cq_host)
     pr_info(DRV_NAME ": CQCRI  0x%08x, CQCRA 0x%08x.\n",
 		cmdq_readl(cq_host, CQCRI),cmdq_readl(cq_host, CQCRA));
 
-    pr_info(DRV_NAME ": unfinished task info:\n");
+	pr_info(DRV_NAME ": host driver last issue task is task%d.\n", lastTask);
 
+    pr_info(DRV_NAME ": unfinished task info:\n");
     int fuck;
     for(fuck = 0; fuck < 32; fuck++)
     printk("tag[%d] %d,", fuck,count[fuck]);
+
+    pr_info(DRV_NAME ": every queue slot task info:\n");
+    for(fuck = 0; fuck < 32; fuck++)
+    printk("tag[%d] %d,", fuck,count1[fuck]);
+
 	pr_info(DRV_NAME ": ===========================================\n");
 }
 
@@ -294,7 +302,7 @@ static int cmdq_enable(struct mmc_host *mmc)
 	/* TODO: if the legacy MMC host controller is in idle state */
 
 	cqcfg = cmdq_readl(cq_host, CQCFG);
-	if (cqcfg & 0x1) {
+	if (cqcfg & 0x101) {
 		pr_err("%s: %s: cq_host is already enabled\n",
 				mmc_hostname(mmc), __func__);
 		WARN_ON(1);
@@ -346,11 +354,16 @@ static int cmdq_enable(struct mmc_host *mmc)
 	/* enable CQ_HOST */
 //	cmdq_writel(cq_host, cmdq_readl(cq_host, CQCFG) | CQ_ENABLE,
 //		    CQCFG);
-	cmdq_writel(cq_host, CQ_ENABLE, CQCFG);
+	cmdq_writel(cq_host, CQ_ENABLE|CQ_DCMD, CQCFG);
 	mdelay(2);
 	cq_host->enabled = true;
-	printk("====> %s:%d is running. rca is %d.\n",__func__,
+	printk("====> %s:%d CMDQ enabled. rca is %d.\n",__func__,
 		__LINE__, cq_host->rca);
+	printk("====> eMMC firmware version. 0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x.\n",
+	        mmc->card->ext_csd.fwrev[0],mmc->card->ext_csd.fwrev[1],
+	        mmc->card->ext_csd.fwrev[2],mmc->card->ext_csd.fwrev[3],
+	        mmc->card->ext_csd.fwrev[4],mmc->card->ext_csd.fwrev[5],
+	        mmc->card->ext_csd.fwrev[6],mmc->card->ext_csd.fwrev[7]);
 
 
 	//testing_simple(cq_host, 0);
@@ -409,6 +422,7 @@ printk("====>%s:%d is running, JFDBUG.\n", __func__, __LINE__);
 
 static int cmdq_restore_irqs(struct mmc_host *mmc)
 {
+#if 0
 	struct cmdq_host *cq_host = (struct cmdq_host *)mmc_cmdq_private(mmc);
 
 	if (!cq_host->enabled)
@@ -417,7 +431,7 @@ static int cmdq_restore_irqs(struct mmc_host *mmc)
 	if (cq_host->ops->clear_set_irqs)
 		cq_host->reg = cq_host->ops->clear_set_irqs(cq_host->mmc, 0xFFFFFFFF, SDHCI_INT_CMDQ_EN | SDHCI_INT_ERROR_MASK);
 	cmdq_clear_set_irqs(cq_host, 0x0, CQ_INT_ALL);
-
+#endif
 	return 0;
 }
 
@@ -563,17 +577,13 @@ static void zed_cmdq_prep(struct cmdq_host *cq_host, struct mmc_request *mrq,
 		len = sg_dma_len(mrq->data->sg);
 		
 		cmdq_writel(cq_host,addr,CQDESC); //buffer address
-		//printk("====> first CQDESC buffer address is 0x%x.\n",cmdq_readl(cq_host,CQDESC));
 		cmdq_writel(cq_host,0,CQDESC); //data length
-		//printk("====> second CQDESC  data length is 0x%x.\n",cmdq_readl(cq_host,CQDESC));
 		cmdq_writel(cq_host,mrq->cmdq_req->blk_addr,CQDESC); //block address
-		//printk("====> third CQDESC  blk_addr is 0x%x.\n",cmdq_readl(cq_host,CQDESC));
 		third_des = BLK_COUNT(mrq->cmdq_req->data.blocks) +
 			DATA_DIR(!!(req_flags & DIR)) +
 			QBAR(qbr) +
 			INT(intr);//interrupte
 		cmdq_writel(cq_host,third_des,CQDESC);
-		//printk("====> fourth CQDESC is 0x%x.\n",cmdq_readl(cq_host,CQDESC));
 		cmdq_writel(cq_host,tag,CQTID);
 
 		mrq->data->bytes_xfered += len;
@@ -669,7 +679,6 @@ static void zed_cmdq_prep_Dcmdq(struct mmc_host *mmc,
     cmdq_writel(cq_host,mrq->cmd->arg,CQDESC);
 	data32 = ((u32)resp_type << 23) + ((u32)mrq->cmd->opcode << 16) + 4;
 	cmdq_writel(cq_host,data32,CQDESC); //data length
-	
 	cmdq_writel(cq_host,31,CQTID);
 
 
@@ -741,6 +750,7 @@ static int cmdq_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	unsigned long flags;
 
 	BUG_ON(!mrq);
+
 	if (!cq_host->enabled) {
 		err = -EINVAL;
 		goto out;
@@ -755,6 +765,8 @@ static int cmdq_request(struct mmc_host *mmc, struct mmc_request *mrq)
 			BUG_ON(1);
 		cq_host->mrq_slot[31] = mrq;
 		count[31]++;
+		count1[31]++;
+		lastTask = 31;
 		mod_timer(&cq_host->timer[31],
 		jiffies + msecs_to_jiffies(CMDQ_TASK_TIMEOUT_MS));
 		//if (false == cq_host->err_handle)
@@ -769,18 +781,8 @@ static int cmdq_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		return 0;
 	}
 	
-#if 0
-  do{
-        int temp = cmdq_readl(cq_host, CQTDBR);
-        if(temp & (1 << tag)){
-        printk("====>CQTDBR bit %d is not clear, reg is %x.\n", tag, temp);
-        printk("====>mrq_slot is %s.\n",
-        (cq_host->mrq_slot[tag] ?  "UNULL" : "NULL"));
-        }else
-        break;
-    }while(1);
-#endif   
-	mm_log_print(NULL, "REQ: Trigger tag: %2d\n", tag);
+
+	//mm_log_print(NULL, "REQ: Trigger tag: %2d\n", tag);
 	zed_cmdq_prep(cq_host, mrq, 1,
 	(mrq->cmdq_req->cmdq_req_flags & QBR), tag);
 #if 0
@@ -795,6 +797,8 @@ static int cmdq_request(struct mmc_host *mmc, struct mmc_request *mrq)
         }
 #endif
     count[tag]++;
+    count1[tag]++;
+    lastTask = tag;
     BUG_ON(cmdq_readl(cq_host, CQTDBR) & (1 << tag));
 	if (cq_host->mrq_slot[tag]) {
 		pr_err("%s:%d CMDQ slot %d is not empty.!!!\n",
@@ -816,13 +820,18 @@ static int cmdq_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	while (1) {
 		cmdq_writel(cq_host, 1 << tag, CQTDBR);
 		tmp = cmdq_readl(cq_host, CQTDBR);
-		if (tmp & (1 << tag))
+		
+		if (tmp & (1 << tag)) {
+		    //if ((tmp & (~(1 << tag))))
+		   // printk("=====>dbg : multiple task in host,CQTDBR 0x%x.\n", tmp);
 			break;
+		}	
 		mb();
 		pr_err("%s: set CQTDBR failed, retry\n", __func__);
 	}
 	spin_unlock_irqrestore(&cq_host->cmdq_lock, flags);
 out:
+
 	return err;
 }
 
@@ -830,8 +839,9 @@ static int cmdq_finish_data(struct mmc_host *mmc, unsigned int tag)
 {
 	struct mmc_request *mrq;
 	struct cmdq_host *cq_host = (struct cmdq_host *)mmc_cmdq_private(mmc);
-
 	mrq = cq_host->mrq_slot[tag];
+	struct mmc_cmdq_req *cmdq_req = &mrq->cmdq_req;
+
 	if (NULL == mrq) {
 		/* FIXME controller may still report TCC after clearing*/
 		/*pr_err("%s: mrq_slot %d is NULL in data finishing!!!\n",
@@ -841,7 +851,7 @@ static int cmdq_finish_data(struct mmc_host *mmc, unsigned int tag)
 
 	cq_host->mrq_slot[tag] = NULL;
 	count[tag]--;
-	mm_log_print(NULL, "IRQ: Finish tag: %2d\n", tag);
+	//mm_log_print(NULL, "IRQ: Finish tag: %2d\n", tag);
 	del_timer(&cq_host->timer[tag]);
 	//cq_host->ops->tuning_move(mmc, TUNING_CLK, TUNING_FLAG_CLEAR_COUNT);
 
@@ -1079,8 +1089,7 @@ irqreturn_t cmdq_irq(struct mmc_host *mmc, u32 intmask)
 			cq_host->ops->clean_irqs(mmc, SDHCI_INT_ERROR_MASK);
 #endif
              /*FIXME don't know if zed need do following action */
-			//cmdq_clear_set_irqs(cq_host, CQIS_RED, 0x0); 
-
+			//cmdq_clear_set_irqs(cq_host, CQIS_RED, 0x0);
 			//cmdq_writel(cq_host, CQIS_RED, CQIS);
 			queue_work(cq_host->wq_resend, &cq_host->work_resend);
 		}
@@ -1094,7 +1103,7 @@ irqreturn_t cmdq_irq(struct mmc_host *mmc, u32 intmask)
 			/* read QCTCN and complete the request */
 			comp_status = cmdq_readl(cq_host, CQTCN);
 			dbr_status = cmdq_readl(cq_host, CQTDBR);
-			mm_log_print(NULL, "IRQ: TCN: %08x, TDBR: %08x IS: %08x\n", comp_status, dbr_status, status);
+			//mm_log_print(NULL, "IRQ: TCN: %08x, TDBR: %08x IS: %08x\n", comp_status, dbr_status, status);
 			if (!(comp_status & (~dbr_status))) {
 				//pr_err("%s:%d  CQTCN no completed task,CQIS: %08x, TCN: %08x, TDBR: %08x.\n",
 				//			__func__, __LINE__, status, comp_status, dbr_status);
@@ -1119,9 +1128,9 @@ irqreturn_t cmdq_irq(struct mmc_host *mmc, u32 intmask)
 			unsigned int tmp = ~0;
 			while (1) {
 				cmdq_writel(cq_host, comp_status & tmp, CQTCN);
-				mm_log_print(NULL, "clear TCN: %08x\n", comp_status & tmp);
+				//mm_log_print(NULL, "clear TCN: %08x\n", comp_status & tmp);
 				tmp = cmdq_readl(cq_host, CQTCN);
-				mm_log_print(NULL, "read back TCN: %08x\n", tmp);
+				//mm_log_print(NULL, "read back TCN: %08x\n", tmp);
 				if (!(tmp & comp_status))
 					break;
 				pr_err("%s: clear CQTCN failed, retry\n", __func__);
@@ -1234,7 +1243,6 @@ static void cmdq_post_req(struct mmc_host *mmc, struct mmc_request *mrq,
 			  int err)
 {
 	struct mmc_data *data = mrq->data;
-
 	if (data) {
 		data->error = 0;
 		dma_unmap_sg(mmc_dev(mmc), data->sg, data->sg_len,

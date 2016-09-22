@@ -575,6 +575,9 @@ static int mmc_decode_ext_csd(struct mmc_card *card, u8 *ext_csd)
 			pr_err("%s: %s: CMDQ supported: depth: %d\n",
 				mmc_hostname(card->host), __func__,
 				card->ext_csd.cmdq_depth);
+		} else {
+		    pr_err("%s: %s: CMDQ doesn't supported.\n",
+				mmc_hostname(card->host), __func__);
 		}
 
 		memcpy(card->ext_csd.fwrev, &ext_csd[EXT_CSD_FIRMWARE_VERSION],

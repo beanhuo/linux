@@ -207,28 +207,39 @@ static void mmc_cmdq_thread(struct work_struct *work)
 	down(&mq->thread_sem);
 	while (1) {
 		spin_lock_bh(&ctx->cmdq_ctx_lock);
+		unsigned int cmd_flags = 0;
 		if (!mmc_cmdq_should_pull_reqs(host, ctx)) {
 			test_and_set_bit(0, &ctx->req_starved);
 			spin_unlock_bh(&ctx->cmdq_ctx_lock);
 			break;
 		}
 		spin_unlock_bh(&ctx->cmdq_ctx_lock);
-
 		spin_lock_irq(q->queue_lock);
 		req = blk_peek_request(q);
+		cmd_flags = req ? req->cmd_flags : 0;
 		if (!req) {
 			spin_unlock_irq(q->queue_lock);
 			break;
 		}
 
+        if (cmd_flags & MMC_REQ_SPECIAL_MASK) {
+               if (!blk_queue_tag_is_free(q, req)) {
+            	//up(&mq->thread_sem);
+            	spin_unlock_irq(q->queue_lock);
+			    //schedule();
+			   // down(&mq->thread_sem);
+			    continue;
+			  }
+		}
+		
 		if (blk_queue_start_tag(q, req)) {
 			spin_unlock_irq(q->queue_lock);
 			continue;
 		}
 
+		
 		spin_unlock_irq(q->queue_lock);
 		mq->cmdq_issue_fn(mq, req);
-
 	}
 
 	up(&mq->thread_sem);
@@ -315,10 +326,12 @@ static void mmc_queue_setup_discard(struct request_queue *q,
  * mmc_blk_cmdq_setup_queue
  * @mq: mmc queue
  * @card: card to attach to this queue
+ * @bounce: 1 enable,0 disable
  *
  * Setup queue for CMDQ supporting MMC card
  */
-void mmc_blk_cmdq_setup_queue(struct mmc_queue *mq, struct mmc_card *card)
+void mmc_blk_cmdq_setup_queue(struct mmc_queue *mq, struct mmc_card *card,
+        int bounce, unsigned int bouncesz)
 {
 	u64 limit = BLK_BOUNCE_HIGH;
 	struct mmc_host *host = card->host;
@@ -331,12 +344,18 @@ void mmc_blk_cmdq_setup_queue(struct mmc_queue *mq, struct mmc_card *card)
 
 	if (mmc_can_erase(card))
 		mmc_queue_setup_discard(mq->queue, card);
-
+    if (!bounce) {
 	blk_queue_bounce_limit(mq->queue, limit);
 	blk_queue_max_hw_sectors(mq->queue, min(host->max_blk_count,
 						host->max_req_size / 512));
 	blk_queue_max_segment_size(mq->queue, host->max_seg_size);
 	blk_queue_max_segments(mq->queue, host->max_segs);
+    } else {
+	blk_queue_bounce_limit(mq->queue, BLK_BOUNCE_ANY);
+	blk_queue_max_hw_sectors(mq->queue, bouncesz / 512);
+	blk_queue_max_segment_size(mq->queue, bouncesz);
+	blk_queue_max_segments(mq->queue, bouncesz / 512);
+	}
 }
 
 /**
@@ -361,16 +380,17 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 		limit = (u64)dma_max_pfn(mmc_dev(host)) << PAGE_SHIFT;
 
 	mq->card = card;
+
 	if (card->ext_csd.cmdq_mode_en
 		&& (area_type == MMC_BLK_DATA_AREA_MAIN)) {
 		mq->queue = blk_init_queue(mmc_cmdq_dispatch_req, lock);
 		if (!mq->queue) {
 			return -ENOMEM;
 			}
-		mmc_blk_cmdq_setup_queue(mq, card);
+		mmc_blk_cmdq_setup_queue(mq, card, 1, MMC_QUEUE_BOUNCESZ);
 		ret = mmc_cmdq_init(mq, card);
 		if (ret) {
-			pr_err("%s: %d: cmdq: unable to set-up\n",
+			pr_err("%s: %d: cmdq: unable to set-up.\n",
 				mmc_hostname(card->host), ret);
 			blk_cleanup_queue(mq->queue);
 		} else {
@@ -594,9 +614,13 @@ int mmc_cmdq_init(struct mmc_queue *mq, struct mmc_card *card)
 	int i, ret = 0;
 	/* one slot is reserved for dcmd requests */
 	int q_depth = card->ext_csd.cmdq_depth - 1;
-
+    struct mmc_queue_req    *cur;
 	card->cmdq_init = false;
-	spin_lock_init(&card->host->cmdq_ctx.cmdq_ctx_lock);
+	unsigned int bouncesz;
+
+	bouncesz = MMC_QUEUE_BOUNCESZ;
+
+    spin_lock_init(&card->host->cmdq_ctx.cmdq_ctx_lock);
 
 	mq->mqrq_cmdq = kzalloc(
 			sizeof(struct mmc_queue_req) * q_depth, GFP_KERNEL);
@@ -607,13 +631,51 @@ int mmc_cmdq_init(struct mmc_queue *mq, struct mmc_card *card)
 		goto out;
 	}
 
+#ifdef CONFIG_MMC_BLOCK_BOUNCE
+	if (card->host->max_segs == 1) {
+		if (bouncesz > card->host->max_req_size)
+			bouncesz = card->host->max_req_size;
+		if (bouncesz > card->host->max_seg_size)
+			bouncesz = card->host->max_seg_size;
+		if (bouncesz > (card->host->max_blk_count * 512))
+			bouncesz = card->host->max_blk_count * 512;
+
+		if (bouncesz > 512) {
+		    for (i = 0; i < q_depth; i++) {
+		        cur = (struct mmc_queue_req *)&mq->mqrq_cmdq[i];
+			    cur->bounce_buf = kmalloc(bouncesz, GFP_KERNEL);
+			    if (!cur->bounce_buf) {
+				    pr_err("%s: unable to allocate cmdq bounce buffer%d.\n",
+					    mmc_card_name(card), i);
+				i--;
+			    for (; i >= 0; i--) {
+			        cur = (struct mmc_queue_req *)&mq->mqrq_cmdq[i];
+                    kfree(cur->bounce_buf);
+					cur->bounce_buf = NULL;
+				    }
+				break;
+			    }
+			}
+		}
+	}
+#endif
+
 	for (i = 0; i < q_depth; i++) {
 		/* TODO: reduce the sg allocation by delaying them */
-		mq->mqrq_cmdq[i].sg = mmc_alloc_sg(card->host->max_segs, &ret);
+		cur = (struct mmc_queue_req *)&mq->mqrq_cmdq[i];
+		cur->sg = mmc_alloc_sg(card->host->max_segs, &ret);
 		if (ret) {
 			pr_warn("%s: unable to allocate cmdq sg of size %d\n",
 				mmc_card_name(card),
 				card->host->max_segs);
+			goto free_mqrq_sg;
+		}
+
+		if (cur->bounce_buf != NULL)
+			cur->bounce_sg= mmc_alloc_sg(bouncesz / 512, &ret);
+		    if (ret) {
+		        pr_warn("%s: unable to allocate cmdq bounce_sg of size %d\n",
+				mmc_card_name(card), bouncesz / 512);
 			goto free_mqrq_sg;
 		}
 	}
@@ -634,9 +696,16 @@ int mmc_cmdq_init(struct mmc_queue *mq, struct mmc_card *card)
 	goto out;
 
 free_mqrq_sg:
-	/* only can free to the Nth sg which failed to allocate */
-	for (i = 0; i < q_depth; i++)
-		kfree(mq->mqrq_cmdq[i].sg);
+	/* TODO: only can free to the Nth sg which failed to allocate */
+	for (i = 0; i < q_depth; i++) {
+	cur = (struct mmc_queue_req *)&mq->mqrq_cmdq[i];
+		kfree(cur->sg);
+	    if ( cur->bounce_buf != NULL) {
+	       kfree(cur->bounce_buf);
+	       cur->bounce_buf = NULL;
+	       kfree(cur->bounce_sg);
+	     }
+	}
 	kfree(mq->mqrq_cmdq);
 	mq->mqrq_cmdq = NULL;
 out:
@@ -647,13 +716,21 @@ void mmc_cmdq_clean(struct mmc_queue *mq, struct mmc_card *card)
 {
 	int i;
 	int q_depth = card->ext_csd.cmdq_depth - 1;
+    struct mmc_queue_req    *cur;
 
 	blk_free_tags(mq->queue->queue_tags);
 	mq->queue->queue_tags = NULL;
 	blk_queue_free_tags(mq->queue);
 
-	for (i = 0; i < q_depth; i++)
-		kfree(mq->mqrq_cmdq[i].sg);
+	for (i = 0; i < q_depth; i++) {
+	cur = (struct mmc_queue_req *)&mq->mqrq_cmdq[i];
+		kfree(cur->sg);
+	    if (cur->bounce_buf != NULL) {
+	       kfree(cur->bounce_buf);
+	       cur->bounce_buf = NULL;
+	       kfree(cur->bounce_sg);
+	     }
+	}
 	kfree(mq->mqrq_cmdq);
 	mq->mqrq_cmdq = NULL;
 }
