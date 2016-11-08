@@ -809,3 +809,44 @@ int mmc_can_ext_csd(struct mmc_card *card)
 {
 	return (card && card->csd.mmca_vsn > CSD_SPEC_VER_3);
 }
+
+int mmc_send_general_command(struct mmc_host *host,
+        u32 arg, u8 *buf, u32 len)
+{
+	struct scatterlist sg;
+	u8 *data_buf;
+	struct mmc_request mrq = {NULL};
+	struct mmc_command cmd = {0};
+	struct mmc_data data = {0};
+
+	/* dma onto stack is unsafe/nonportable, but callers to this
+	 * routine normally provide temporary on-stack buffers ...
+	 */
+	data_buf = kmalloc(len, GFP_KERNEL);
+	if (!data_buf)
+		return -ENOMEM;
+
+	memcpy(data_buf, buf, len);
+	cmd.opcode = MMC_GEN_CMD;
+	cmd.arg =  arg;
+	cmd.flags = MMC_RSP_SPI_R1B | MMC_RSP_R1B | MMC_CMD_ADTC;
+	mrq.cmd = &cmd;
+
+	data.blksz = len;
+	data.blocks = 1;
+	data.flags = MMC_DATA_WRITE;
+	data.sg = &sg;
+	data.sg_len = 1;
+	data.timeout_ns = 400 * 1000000;
+
+	sg_init_one(data.sg, data_buf, len);
+	mrq.data = &data;
+	mmc_wait_for_req(host, &mrq);
+	kfree(data_buf);
+	if (cmd.error)
+		return cmd.error;
+	if (data.error)
+		return data.error;
+
+	return 0;
+}
