@@ -790,3 +790,12 @@ config MMC_CQ_HCI
 	  If you have a controller with this interface, say Y or M here.
 
 	  If unsure, say N.
+
+config MICRON_MMC_REFRESH
+	bool "Micron MMC refresh Support"
+	depends on MMC
+	help
+	  Say YES here to support Refresh feature on Micron 5.1 eMMC.
+	  If your eMMC is not Micron eMMC or not support refresh,say N here.
+
+	  If unsure, say N.
