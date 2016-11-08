@@ -23,6 +23,7 @@
 #include "bus.h"
 #include "mmc_ops.h"
 #include "sd_ops.h"
+#include "refresh.h"
 
 static const unsigned int tran_exp[] = {
 	10000,		100000,		1000000,	10000000,
@@ -1555,6 +1556,10 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 
 #endif
 
+#ifdef CONFIG_MICRON_MMC_REFRESH
+    mmc_init_refresh(host);
+#endif
+
 #if 0
 	/*
 	 * Enable Barrier feature (if supported)
@@ -1824,6 +1829,7 @@ static int mmc_shutdown(struct mmc_host *host)
 {
 	int err = 0;
 
+	uir_blind_pro(host); /* Add blind UIR before eMMC power down */
 	/*
 	 * In a specific case for poweroff notify, we need to resume the card
 	 * before we can shutdown it properly.
