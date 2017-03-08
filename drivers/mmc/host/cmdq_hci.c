@@ -56,6 +56,7 @@ static int lastTask;
 
 static void cmdq_dumpregs(struct cmdq_host *cq_host)
 {
+    int fuck;
 
 	printk(": ========== REGISTER DUMP ==========\n");
 	pr_info(DRV_NAME ": CQCFG: 0x%08x.\n",
@@ -89,7 +90,7 @@ static void cmdq_dumpregs(struct cmdq_host *cq_host)
 	pr_info(DRV_NAME ": host driver last issue task is task%d.\n", lastTask);
 
     pr_info(DRV_NAME ": unfinished task info:\n");
-    int fuck;
+
     for(fuck = 0; fuck < 32; fuck++)
     printk("tag[%d] %d,", fuck,count[fuck]);
 
@@ -647,12 +648,8 @@ static void testing_dcmd(struct mmc_host *mmc,
 static void zed_cmdq_prep_Dcmdq(struct mmc_host *mmc,
 				struct mmc_request *mrq)
 {
-	u64 *task_desc = NULL;
-	u64 data = 0;
 	u32 data32 = 0;
 	u8 resp_type;
-	u8 *desc;
-	u32 *dataddr;
 	struct cmdq_host *cq_host = mmc_cmdq_private(mmc);
 
 	if (!(mrq->cmd->flags & MMC_RSP_PRESENT)) {
@@ -840,7 +837,6 @@ static int cmdq_finish_data(struct mmc_host *mmc, unsigned int tag)
 	struct mmc_request *mrq;
 	struct cmdq_host *cq_host = (struct cmdq_host *)mmc_cmdq_private(mmc);
 	mrq = cq_host->mrq_slot[tag];
-	struct mmc_cmdq_req *cmdq_req = &mrq->cmdq_req;
 
 	if (NULL == mrq) {
 		/* FIXME controller may still report TCC after clearing*/
