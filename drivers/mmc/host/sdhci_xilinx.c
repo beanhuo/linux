@@ -150,7 +150,7 @@
 #define RESIS_VCCQ_DONE     0x02
 
 #define XILINX_RETRY_MAX 500
-#define XILINX_EMMC_DRV_VERSION "20150629"
+#define XILINX_EMMC_DRV_VERSION "20160921"
 
 #define XILINX_SDHCI_USE_SDMA		(1<<0)	/* Host is SDMA capable */
 #define XILINX_SDHCI_USE_ADMA		(1<<1)	/* Host is ADMA capable */
@@ -166,6 +166,9 @@
 #define XILINX_SDHCI_USING_RETUNING_TIMER (1<<11)	/* Host is using a retuning timer for the card */
 #define XILINX_SDHCI_USE_64_BIT_DMA	(1<<12)	/* Use 64-bit DMA */
 #define XILINX_SDHCI_HS400_TUNING	(1<<13)	/* Tuning for HS400 */
+
+#define HS400_PROVISION 1	/* Activate HS400 */
+#define HS200_PROVISION 0	/* Deactivate HS200 */
 
 struct xilinx_emmc_regs {
 	uint32_t reg_XILINX_MM2S_DMACR;
@@ -698,7 +701,7 @@ static int xilinx_reset_host(struct mmc_host *mmc)
 	mdelay(1);
 	writel(CFG_BUS_WIDTH_X1, misc_reg + EMMC_CFG);
 
-	xilinx_set_clk(mmc, 100);
+	xilinx_set_clk(mmc, 25);
 	xilinx_set_cmd_phase(mmc, 1);
 	xilinx_set_rd_phase(mmc, 0);
 	xilinx_set_wr_phase(mmc, 0);
@@ -948,7 +951,8 @@ static int xilinx_cmd_tuning(struct mmc_host *mmc)
 		window_start = index;
 	}
 
-	if (window_len >= 3) {
+	//if (window_len >= 3) {
+	if (window_len >= 2) {
 		dev_info(mmc_dev(mmc), "==========> cmd tuning finish. phase [%d %d]\n",
 				window_start, window_start + window_len - 1);
 		xilinx_set_cmd_phase(mmc, window_start + ((window_len - 1) / 2));
@@ -1060,7 +1064,6 @@ static int xilinx_execute_hs200_tuning(struct mmc_host *mmc, int mhz)
 		clk_wr_phase = 0;
 		clk_rd_phase = 0;
 		clk_cmd_phase = 1;
-
 		xilinx_set_cmd_phase(mmc, clk_cmd_phase);
 		xilinx_set_rd_phase(mmc, clk_rd_phase);
 		xilinx_set_wr_phase(mmc, clk_wr_phase);
@@ -1115,10 +1118,10 @@ static int xilinx_prepare_hs400(struct mmc_host *mmc, int mhz)
 
 		/* Step 3: Set emmc host to HS400 mode */
 		writel(CFG_DDR_ENABLE | CFG_DATA_CLK, misc_reg + EMMC_CFG);
+
 		clk_wr_phase = 2;
 		clk_rd_phase = 0;
 		clk_cmd_phase = 1;
-
 		xilinx_set_cmd_phase(mmc, clk_cmd_phase);
 		xilinx_set_rd_phase(mmc, clk_rd_phase);
 		xilinx_set_wr_phase(mmc, clk_wr_phase);
@@ -1166,16 +1169,17 @@ static int xilinx_execute_tuning(struct mmc_host *mmc, u32 opcode)
 	bool hs400_tuning;
 	unsigned long flags;
 	int ret;
-
+    	int mhz = 200;
+  
 	spin_lock_irqsave(&host->lock, flags);
 	hs400_tuning = host->flag & XILINX_SDHCI_HS400_TUNING;
 	host->flag &= ~XILINX_SDHCI_HS400_TUNING;
 	spin_unlock_irqrestore(&host->lock, flags);
 
 	if (hs400_tuning)
-		ret = xilinx_prepare_hs400(mmc, 200);
+		ret = xilinx_prepare_hs400(mmc, mhz);
 	else
-		ret = xilinx_execute_hs200_tuning(mmc, 200);
+		ret = xilinx_execute_hs200_tuning(mmc, mhz);
 
 	return ret;
 }
@@ -1436,8 +1440,11 @@ static void xilinx_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	unsigned long flags;
 
 	spin_lock_irqsave(&host->lock, flags);
-
+    if (data &&(data->timeout_ns))
+	mod_timer(&host->timer, jiffies + msecs_to_jiffies(data->timeout_ns/1000));
+	else
 	mod_timer(&host->timer, jiffies + 20*HZ);
+
 	save_regs_to_mem(host);
 
 	host->mrq = mrq;
@@ -1736,7 +1743,6 @@ static irqreturn_t xilinx_irq(int irq, void *dev)
 
 	dev_dbg(mmc_dev(host->mmc), ">>>>>>>>>>>>> ISR IN  <<<<<<<<<<<\n");
 
-//	printk("====>%s:  interrupte! \n", __func__);
 
 #ifdef CONFIG_MMC_CQ_HCI
 	if (host->mmc->card  && (host->cq_host && host->cq_host->enabled)) {
@@ -2129,15 +2135,16 @@ static int xilinx_emmc_probe(struct platform_device *pdev)
 	mmc->caps |= MMC_CAP_CMD23;
 	/* when set, mmc_cmd has MMC_RSP_CRC flag and mmc_resp_type() need it. */
 	mmc->caps |= MMC_CAP_WAIT_WHILE_BUSY;
-
-   mmc->caps2 = MMC_CAP2_HS200 | MMC_CAP2_HS400;
-
-    //mmc->caps2 = MMC_CAP2_HS200;
-    
+	
+#if HS400_PROVISION
+	mmc->caps2 = MMC_CAP2_HS200 | MMC_CAP2_HS400;    
 	mmc->caps2 |= MMC_CAP2_HS200_1_8V_SDR | MMC_CAP2_HS200_1_2V_SDR;
 	mmc->caps2 |= MMC_CAP2_HS400_1_8V | MMC_CAP2_HS400_1_2V;
+#elif HS200_PROVISION
+	mmc->caps2 = MMC_CAP2_HS200;    
+	mmc->caps2 |= MMC_CAP2_HS200_1_8V_SDR | MMC_CAP2_HS200_1_2V_SDR;
+#endif
 	mmc->caps2 |= MMC_CAP2_CMD_QUEUE;
-
 	mmc->max_blk_size  = 512;
 	mmc->max_blk_count = 2 * 1024 * 10;
 	/* maximum number of bytes in one req */
