@@ -1,13 +1,14 @@
 #!/bin/bash
+export TFTP=/home/workspace/micron/00_job_EBU/tftp
 if make -j6 #& make modules_install INSTALL_MOD_PATH=/workspace/fs/mountfs/fs6410/filesystem/
  then
      
    if make ARCH=arm UIMAGE_LOADADDR=0x8000 uImage -j8
 	then
-	 echo "cp uImage to /home/bean/tftp/"
-	    if cp ./arch/arm/boot/uImage /home/bean/tftp/ && cp ./arch/arm/boot/zImage /home/bean/tftp/
+	 echo "cp object image to $TFTP"
+	   if cp ./arch/arm/boot/uImage $TFTP/ && cp ./arch/arm/boot/zImage $TFTP/
 		then
-			if cp ./arch/arm/boot/dts/zynq-zed.dtb /home/bean/tftp/devicetree.dtb
+			if cp ./arch/arm/boot/dts/zynq-zed.dtb $TFTP/devicetree.dtb
 				then
 					echo "**** copy uImage and dtb OK! ****"
 			else
