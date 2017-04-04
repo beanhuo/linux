@@ -61,6 +61,7 @@ MODULE_ALIAS("mmc:block");
 #define MMC_BLK_TIMEOUT_MS  (10 * 60 * 1000)        /* 10 minute timeout */
 #define MMC_SANITIZE_REQ_TIMEOUT 240000
 #define MMC_EXTRACT_INDEX_FROM_ARG(x) ((x & 0x00FF0000) >> 16)
+#define MMC_EXTRACT_VALUE_FROM_ARG(x) ((x & 0x0000FF00) >> 8)
 
 #define mmc_req_rel_wr(req)	(((req->cmd_flags & REQ_FUA) || \
 				  (req->cmd_flags & REQ_META)) && \
@@ -569,6 +570,15 @@ static int mmc_blk_ioctl_cmd(struct block_device *bdev,
 						__func__, data.error);
 		err = data.error;
 		goto cmd_rel_host;
+	}
+
+	if ((MMC_EXTRACT_INDEX_FROM_ARG(cmd.arg) == EXT_CSD_CACHE_CTRL) &&
+	    (cmd.opcode == MMC_SWITCH) && (card->ext_csd.cache_size > 0)) {
+		if (MMC_EXTRACT_VALUE_FROM_ARG(cmd.arg) & 1)
+			card->ext_csd.cache_ctrl = 1;
+		else
+			card->ext_csd.cache_ctrl = 0;
+
 	}
 
 	/*
