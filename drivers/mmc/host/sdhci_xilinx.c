@@ -952,7 +952,7 @@ static int xilinx_cmd_tuning(struct mmc_host *mmc)
 	}
 
 	//if (window_len >= 3) {
-	if (window_len >= 2) {
+	if (window_len >= 4) {
 		dev_info(mmc_dev(mmc), "==========> cmd tuning finish. phase [%d %d]\n",
 				window_start, window_start + window_len - 1);
 		xilinx_set_cmd_phase(mmc, window_start + ((window_len - 1) / 2));
@@ -1062,7 +1062,7 @@ static int xilinx_execute_hs200_tuning(struct mmc_host *mmc, int mhz)
 		writel(CFG_DATA_CLK, misc_reg + EMMC_CFG);
 
 		clk_wr_phase = 0;
-		clk_rd_phase = 0;
+		clk_rd_phase = 1;
 		clk_cmd_phase = 1;
 		xilinx_set_cmd_phase(mmc, clk_cmd_phase);
 		xilinx_set_rd_phase(mmc, clk_rd_phase);

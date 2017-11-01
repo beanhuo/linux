@@ -59,40 +59,74 @@ static void cmdq_dumpregs(struct cmdq_host *cq_host)
     int fuck;
 
 	printk(": ========== REGISTER DUMP ==========\n");
+	pr_info(DRV_NAME ": CQVER: 0x%08x.\n",
+		cmdq_readl(cq_host, CQVER));
+
+	pr_info(DRV_NAME ": CQCAP: 0x%08x.\n",
+		cmdq_readl(cq_host, CQCAP));
+
 	pr_info(DRV_NAME ": CQCFG: 0x%08x.\n",
 		cmdq_readl(cq_host, CQCFG));
+	
+	pr_info(DRV_NAME ": CQIS: 0x%08x.\n",
+		cmdq_readl(cq_host, CQIS));
+
+	pr_info(DRV_NAME ": CQISTE: 0x%08x.\n",
+		cmdq_readl(cq_host, CQISTE));
+	
+	pr_info(DRV_NAME ": CQISGE: 0x%08x.\n",
+		cmdq_readl(cq_host, CQISGE));
+	
+	pr_info(DRV_NAME ": CQIC: 0x%08x.\n",
+		cmdq_readl(cq_host, CQIC));
+	
+	pr_info(DRV_NAME ": CQTDLBA: 0x%08x.\n",
+		cmdq_readl(cq_host, CQTDLBA));
+	
+	pr_info(DRV_NAME ": CQTDLBAU: 0x%08x.\n",
+		cmdq_readl(cq_host, CQTDLBAU));
 
 	pr_info(DRV_NAME ": CQTDBR: 0x%08x | CQTCN:  0x%08x\n",
 		cmdq_readl(cq_host, CQTDBR),
 		cmdq_readl(cq_host, CQTCN));
 
-	pr_info(DRV_NAME ": Last CQDQES  0x%08x | CQTID:  0x%08x\n",
+	pr_info(DRV_NAME ": CQDQS: 0x%08x | CQDPT:  0x%08x\n",
+		cmdq_readl(cq_host, CQDQS),
+		cmdq_readl(cq_host, CQDPT));
+
+	pr_info(DRV_NAME ": CQTCLR: 0x%08x \n",
+		cmdq_readl(cq_host, CQTCLR));
+
+	pr_info(DRV_NAME ": CQSSC1: 0x%08x | CQSSC2:  0x%08x\n",
+		cmdq_readl(cq_host, CQSSC1),
+		cmdq_readl(cq_host, CQSSC2));
+
+	pr_info(DRV_NAME ": CQCRDCT: 0x%08x \n",
+		cmdq_readl(cq_host, CQCRDCT));
+
+	pr_info(DRV_NAME ": CQRMEM: 0x%08x \n",
+		cmdq_readl(cq_host, CQRMEM));
+
+	pr_info(DRV_NAME ": CQTERRI: 0x%08x \n",
+		cmdq_readl(cq_host, CQTERRI));
+
+	pr_info(DRV_NAME ": CQCRI  0x%08x | CQCRA:  0x%08x\n",
+		cmdq_readl(cq_host, CQCRI),
+		cmdq_readl(cq_host, CQCRA));
+	
+	pr_info(DRV_NAME ": CQESR: 0x%08x \n",
+		cmdq_readl(cq_host, CQESR));
+
+	pr_info(DRV_NAME ": Last CQDESC  0x%08x | CQTID:  0x%08x\n",
 		cmdq_readl(cq_host, CQDESC),
 		cmdq_readl(cq_host, CQTID));
 
-	pr_info(DRV_NAME ": CQISTE  0x%08x | CQISGE:  0x%08x\n",
-		cmdq_readl(cq_host, CQISTE),
-		cmdq_readl(cq_host, CQISGE));
-
-	pr_info(DRV_NAME ": CQSSC1  0x%08x | CQSSC2:  0x%08x\n",
-		cmdq_readl(cq_host, CQSSC1),
-		cmdq_readl(cq_host, CQSSC2));
-	
-	pr_info(DRV_NAME ": CQIS  0x%08x.\n",
-		cmdq_readl(cq_host, CQIS));
-		
-	pr_info(DRV_NAME ": CQTERRI  0x%08x.\n",
-		cmdq_readl(cq_host, CQTERRI));
-
-    pr_info(DRV_NAME ": CQCRI  0x%08x, CQCRA 0x%08x.\n",
-		cmdq_readl(cq_host, CQCRI),cmdq_readl(cq_host, CQCRA));
-
 	pr_info(DRV_NAME ": host driver last issue task is task%d.\n", lastTask);
 
-    pr_info(DRV_NAME ": unfinished task info:\n");
+    	pr_info(DRV_NAME ": unfinished task info:\n");
 
-    for(fuck = 0; fuck < 32; fuck++)
-    printk("tag[%d] %d,", fuck,count[fuck]);
+    	for(fuck = 0; fuck < 32; fuck++)
+   	 printk("tag[%d] %d,", fuck,count[fuck]);
 
     pr_info(DRV_NAME ": every queue slot task info:\n");
     for(fuck = 0; fuck < 32; fuck++)

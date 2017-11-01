@@ -14,14 +14,12 @@
 #include <linux/mmc/core.h>
 
 /* registers */
-//#define CQVER		0x00
-//#define CQCAP		0x04
-
+#define CQVER		0x00
+#define CQCAP		0x04
 #define CQCFG		0x08
 #define CQ_DCMD		0x00001000
 #define CQ_TASK_DESC_SZ 0x00000100
 #define CQ_ENABLE	0x00000001
-
 #define CQCTL		0x0C
 #define CLEAR_ALL_TASKS 0x00000100
 #define HALT		0x00000001
@@ -30,14 +28,14 @@
 #define CQIS		0x10
 #define CQISTE		0x14
 #define CQISGE		0x18
-//#define CQIC		0x1C
+#define CQIC		0x1C
 
-//#define CQTDLBA		0x20
-//#define CQTDLBAU	0x24
+#define CQTDLBA		0x20
+#define CQTDLBAU	0x24
 #define CQTDBR		0x28
 #define CQTCN		0x2C
 
-//#define CQDQS		0x30
+#define CQDQS		0x30
 #define CQDPT		0x34
 #define CQTCLR		0x38
 
@@ -45,12 +43,12 @@
 #define CQSSC2		0x44
 #define CQCRDCT		0x48
 
-//#define CQRMEM		0x50
+#define CQRMEM		0x50
 #define CQTERRI		0x54
 #define CQCRI		0x58
 #define CQCRA		0x5C
 
-//#define CQESR		0x60
+#define CQESR		0x60
 #define CQDESC		0x64
 #define CQTID		0x68
 
