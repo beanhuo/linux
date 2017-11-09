@@ -35,7 +35,7 @@
 #define CMDQ_TASK_TIMEOUT_MS 60000
 
 #define DRV_NAME "cmdq-host"
-
+#define DELAY_MICRO_SECOND 100
 
 extern void mm_log_print(const struct device *dev, const char *fmt, ...);
 int irqDone;
@@ -857,8 +857,8 @@ static int cmdq_request(struct mmc_host *mmc, struct mmc_request *mrq)
 		   // printk("=====>dbg : multiple task in host,CQTDBR 0x%x.\n", tmp);
 			break;
 		}	
-		mb();
-		pr_err("%s: set CQTDBR failed, retry\n", __func__);
+		//mb();
+		pr_err("%s: set CQTDBR failed for tag%d, retry\n", __func__, tag);
 	}
 	spin_unlock_irqrestore(&cq_host->cmdq_lock, flags);
 out:
@@ -1061,7 +1061,6 @@ irqreturn_t cmdq_irq(struct mmc_host *mmc, u32 intmask)
 	int ret = 0;
 
 	status = cmdq_readl(cq_host, CQIS);
-	cmdq_writel(cq_host, status, CQIS);
 
 	BUG_ON(!in_interrupt());
 	 if (status & CQIS_RED) {
@@ -1070,6 +1069,7 @@ irqreturn_t cmdq_irq(struct mmc_host *mmc, u32 intmask)
 	cmdq_dumpregs(cq_host);
     do{}while(1);
 #endif
+		cmdq_writel(cq_host, status, CQIS);
 		spin_lock(&cq_host->cmdq_lock);
 		if (!err) {
 			/* task response has an error */
@@ -1126,6 +1126,7 @@ irqreturn_t cmdq_irq(struct mmc_host *mmc, u32 intmask)
 		spin_unlock(&cq_host->cmdq_lock);
 	} else if (status & CQIS_TCC) {
 		spin_lock(&cq_host->cmdq_lock);
+		cmdq_writel(cq_host, status, CQIS);
 		if (false == cq_host->err_handle) {
 			cq_host->cmd13_err_count = 0;
 			unsigned int dbr_status;
@@ -1156,6 +1157,7 @@ irqreturn_t cmdq_irq(struct mmc_host *mmc, u32 intmask)
 					req_count++;
 			}
 			unsigned int tmp = ~0;
+
 			while (1) {
 				cmdq_writel(cq_host, comp_status & tmp, CQTCN);
 				//mm_log_print(NULL, "clear TCN: %08x\n", comp_status & tmp);
@@ -1163,17 +1165,15 @@ irqreturn_t cmdq_irq(struct mmc_host *mmc, u32 intmask)
 				//mm_log_print(NULL, "read back TCN: %08x\n", tmp);
 				if (!(tmp & comp_status))
 					break;
-				pr_err("%s: clear CQTCN failed, retry\n", __func__);
+				pr_err("%s: clear CQTCN failed for tag%xh, retry\n", __func__, comp_status & tmp);
 			}
 #if 0
-   
         int DBR = cmdq_readl(cq_host, CQTDBR);
         if (DBR & comp_status) {
         printk("====>CQTDBR 0x%x is not clear.\n", DBR);
         printk("====>CQTCN is 0x%x.\n",comp_status);
         cmdq_dumpregs(cq_host);
         }
-     
  #endif           
 			while (req_count) {
 				cmdq_runtime_pm_put(mmc);
@@ -1545,12 +1545,14 @@ static void cmdq_work_resend(struct work_struct *work)
 			if (cq_host->mrq_slot[tag])
 				val |= (1 << tag);
 		}
+
+		 cmdq_writel(cq_host, val, CQTDBR);  
 		while (1) {
 			cmdq_writel(cq_host, val, CQTDBR);
 			tmp = cmdq_readl(cq_host, CQTDBR);
 			if (tmp & val)
 				break;
-			pr_err("%s: set CQTDBR failed, retry\n", __func__);
+			pr_err("%s: set CQTDBR failed for tag%d, retry\n", __func__, tag);
 		}
 	} else {
 		pr_err("%s:%s: There are tasks written to doorbell after clear task!!!\n",

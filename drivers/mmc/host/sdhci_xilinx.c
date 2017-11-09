@@ -167,8 +167,8 @@
 #define XILINX_SDHCI_USE_64_BIT_DMA	(1<<12)	/* Use 64-bit DMA */
 #define XILINX_SDHCI_HS400_TUNING	(1<<13)	/* Tuning for HS400 */
 
-#define HS400_PROVISION 1	/* Activate HS400 */
-#define HS200_PROVISION 0	/* Deactivate HS200 */
+#define HS400_PROVISION 0	/* Activate HS400 */
+#define HS200_PROVISION 1	/* Deactivate HS200 */
 
 struct xilinx_emmc_regs {
 	uint32_t reg_XILINX_MM2S_DMACR;
@@ -1169,7 +1169,7 @@ static int xilinx_execute_tuning(struct mmc_host *mmc, u32 opcode)
 	bool hs400_tuning;
 	unsigned long flags;
 	int ret;
-    	int mhz = 200;
+    	int mhz = 100;
   
 	spin_lock_irqsave(&host->lock, flags);
 	hs400_tuning = host->flag & XILINX_SDHCI_HS400_TUNING;
