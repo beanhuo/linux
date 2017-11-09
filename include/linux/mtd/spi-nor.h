@@ -78,6 +78,8 @@
 #define SR_BP0			4	/* Block protect 0 */
 #define SR_BP1			8	/* Block protect 1 */
 #define SR_BP2			0x10	/* Block protect 2 */
+#define SR_BP3			0x40	/* Block protect 3 */
+#define SR_TB			0x20
 #define SR_SRWD			0x80	/* SR write protect */
 
 #define SR_QUAD_EN_MX		0x40	/* Macronix Quad I/O */

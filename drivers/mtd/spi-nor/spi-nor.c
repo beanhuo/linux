@@ -390,16 +390,15 @@ erase_err:
 	instr->state = MTD_ERASE_FAILED;
 	return ret;
 }
-
 static int stm_lock(struct spi_nor *nor, loff_t ofs, uint64_t len)
 {
 	struct mtd_info *mtd = nor->mtd;
 	uint32_t offset = ofs;
 	uint8_t status_old, status_new;
 	int ret = 0;
-
+	
 	status_old = read_sr(nor);
-
+#if 0
 	if (offset < mtd->size - (mtd->size / 2))
 		status_new = status_old | SR_BP2 | SR_BP1 | SR_BP0;
 	else if (offset < mtd->size - (mtd->size / 4))
@@ -414,13 +413,44 @@ static int stm_lock(struct spi_nor *nor, loff_t ofs, uint64_t len)
 		status_new = (status_old & ~(SR_BP2 | SR_BP0)) | SR_BP1;
 	else
 		status_new = (status_old & ~(SR_BP2 | SR_BP1)) | SR_BP0;
+#endif
+	int protected_area, start_sector, i;
+	unsigned char TB, BP;
+	int sector_size = 0x10000;
+	start_sector = offset / sector_size;
+	protected_area = len / sector_size;
+	int num_of_sectors = mtd->size / sector_size;
+	
+	if (protected_area == 0 || protected_area > mtd->size / sector_size)
+		return ret;
+	if ((start_sector != 0 && (start_sector + protected_area) != num_of_sectors) ||
+			(protected_area & (protected_area - 1)) != 0)
+ 		return ret;
+	
+	if (offset / sector_size <  num_of_sectors/ 2) {
+		TB = 1;
+	} else {
+		TB = 0;
+	}
+	BP = 1;
+	for (i = 1; i <= num_of_sectors; i = i * 2) {
+		if (protected_area == i) {
+			break;
+		}
+		BP++;
+	}
+
+	status_new = (((BP & 8) >> 3) << 6) | (TB << 5) | ((BP & 7) << 2);
 
 	/* Only modify protection if it will not unlock other areas */
-	if ((status_new & (SR_BP2 | SR_BP1 | SR_BP0)) >
-				(status_old & (SR_BP2 | SR_BP1 | SR_BP0))) {
+	if ((status_new & (SR_TB | SR_BP3 | SR_BP2 | SR_BP1 | SR_BP0)) >
+				(status_old & (SR_TB | SR_BP3 | SR_BP2 | SR_BP1 | SR_BP0))) {
 		write_enable(nor);
 		ret = write_sr(nor, status_new);
 	}
+
+	status_new = read_sr(nor);
+	printk("after lock, SR is 0x%x.\n", status_new);
 
 	return ret;
 }
@@ -433,7 +463,7 @@ static int stm_unlock(struct spi_nor *nor, loff_t ofs, uint64_t len)
 	int ret = 0;
 
 	status_old = read_sr(nor);
-
+#if 0
 	if (offset+len > mtd->size - (mtd->size / 64))
 		status_new = status_old & ~(SR_BP2 | SR_BP1 | SR_BP0);
 	else if (offset+len > mtd->size - (mtd->size / 32))
@@ -448,13 +478,44 @@ static int stm_unlock(struct spi_nor *nor, loff_t ofs, uint64_t len)
 		status_new = (status_old & ~SR_BP1) | SR_BP2 | SR_BP0;
 	else
 		status_new = (status_old & ~SR_BP0) | SR_BP2 | SR_BP1;
+#endif
+	int protected_area, start_sector, i;
+	unsigned char TB, BP;
+	int sector_size = 0x10000;
+	start_sector = offset / sector_size;
+	protected_area = len / sector_size;
+	int num_of_sectors = mtd->size / sector_size;
+	if (protected_area == 0 || protected_area > mtd->size / sector_size)
+		return ret;
 
-	/* Only modify protection if it will not lock other areas */
-	if ((status_new & (SR_BP2 | SR_BP1 | SR_BP0)) <
-				(status_old & (SR_BP2 | SR_BP1 | SR_BP0))) {
+	if ((start_sector != 0 && (start_sector + protected_area) != num_of_sectors) ||
+			(protected_area & (protected_area - 1)) != 0)
+ 		return ret;
+	
+	if (offset / sector_size <  num_of_sectors/ 2) {
+		TB = 1;
+	} else {
+		TB = 0;
+	}
+	BP = 1;
+	for (i = 1; i <= num_of_sectors; i = i * 2) {
+		if (protected_area == i) {
+			break;
+		}
+		BP++;
+	}
+
+	status_new = status_old & (~((((BP & 8) >> 3) << 6) | (TB << 5) | ((BP & 7) << 2)));
+
+	/* Only modify protection if it will not unlock other areas */
+	if ((status_new & (SR_TB | SR_BP3 | SR_BP2 | SR_BP1 | SR_BP0)) <
+				(status_old & (SR_TB | SR_BP3 | SR_BP2 | SR_BP1 | SR_BP0))) {
 		write_enable(nor);
 		ret = write_sr(nor, status_new);
 	}
+
+	status_new = read_sr(nor);
+	printk("after unlock, SR is 0x%x.\n", status_new);
 
 	return ret;
 }
@@ -463,7 +524,6 @@ static int spi_nor_lock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
 	int ret;
-
 	ret = spi_nor_lock_and_prep(nor, SPI_NOR_OPS_LOCK);
 	if (ret)
 		return ret;
@@ -601,7 +661,8 @@ static const struct spi_device_id spi_nor_ids[] = {
 	/* Micron */
 	{ "n25q032",	 INFO(0x20ba16, 0, 64 * 1024,   64, SPI_NOR_QUAD_READ) },
 	{ "n25q064",     INFO(0x20ba17, 0, 64 * 1024,  128, SPI_NOR_QUAD_READ) },
-	{ "n25q128a11",  INFO(0x20bb18, 0, 64 * 1024,  256, SECT_4K | SPI_NOR_QUAD_READ) },
+//	{ "n25q128a11",  INFO(0x20bb18, 0, 64 * 1024,  256, SECT_4K | SPI_NOR_QUAD_READ) },
+	{ "Naxos-128Mb", INFO(0x20bb18, 0, 64 * 1024,  256, SECT_4K | USE_FSR | SPI_NOR_QUAD_READ) },
 	{ "n25q128a13",  INFO(0x20ba18, 0, 64 * 1024,  256, SECT_4K | SPI_NOR_QUAD_READ) },
 	{ "n25q256a",    INFO(0x20ba19, 0, 64 * 1024,  512, SECT_4K | SPI_NOR_QUAD_READ) },
 	{ "n25q512a",    INFO(0x20bb20, 0, 64 * 1024, 1024, SECT_4K | USE_FSR | SPI_NOR_QUAD_READ) },
@@ -723,6 +784,8 @@ static const struct spi_device_id *spi_nor_read_id(struct spi_nor *nor)
 		dev_dbg(nor->dev, " error %d reading JEDEC ID\n", tmp);
 		return ERR_PTR(tmp);
 	}
+
+	printk("JEDEC id bytes: %02x, %2x, %2x\n", id[0], id[1], id[2]);
 
 	for (tmp = 0; tmp < ARRAY_SIZE(spi_nor_ids) - 1; tmp++) {
 		info = (void *)spi_nor_ids[tmp].driver_data;
