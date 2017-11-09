@@ -186,7 +186,8 @@
 			#size-cells = <0>;
 			flash@0 {
 				//compatible = "s25fl256s1";
-				compatible = "n25q128a13";
+				compatible = "Naxos-128Mb";
+				//compatible = "n25q128a13";
 				reg = <0x0>;
 				spi-max-frequency = <50000000>;
 				#address-cells = <1>;
@@ -256,7 +257,8 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 			flash@0 {
-                                 compatible = "n25q128a13";
+				compatible = "Naxos-128Mb";
+                                /* compatible = "n25q128a13";*/
                                  reg = <0x0>;
                                  spi-max-frequency = <50000000>;
                                  #address-cells = <1>;
