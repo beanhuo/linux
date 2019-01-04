@@ -33,7 +33,7 @@
 			clocks = <&clkc 3>;
 		};
 	};
-
+/*
 	fpga_full: fpga-full {
 		compatible = "fpga-region";
 		fpga-mgr = <&devcfg>;
@@ -41,7 +41,7 @@
 		#size-cells = <1>;
 		ranges;
 	};
-
+*/
 	pmu@f8891000 {
 		compatible = "arm,cortex-a9-pmu";
 		interrupts = <0 5 4>, <0 6 4>;
@@ -248,7 +248,7 @@
 			clkc: clkc@100 {
 				#clock-cells = <1>;
 				compatible = "xlnx,ps7-clkc";
-				fclk-enable = <0>;
+				fclk-enable = <0xf>;
 				clock-output-names = "armpll", "ddrpll", "iopll", "cpu_6or4x",
 						"cpu_3or2x", "cpu_2x", "cpu_1x", "ddr2x", "ddr3x",
 						"dci", "lqspi", "smc", "pcap", "gem0", "gem1",
