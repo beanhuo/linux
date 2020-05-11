@@ -30,6 +30,28 @@
 		compatible = "usb-nop-xceiv";
 		#phy-cells = <0>;
 	};
+        /* This is node of zedboard pl nand controller developped by EBU. */
+        zed_nand_controller_0: zed_micron_nand@7aa00000 {
+                #address-cells = <1>;
+                #size-cells = <1>;
+                compatible = "xlnx,Zed-Hspeed-Nand-1.0";
+                interrupt-parent = <&intc>;
+                interrupts = <0 57 4>; /* correspond IRQ 89*/
+                reg = <0x7aa00000 0x100>, <0x7ab00000 0x100>,
+                        <0x7ac00000 0x100>, <0x40400000 0x100>;
+                xlnx,nand-width = <8>;
+                zed,nand-mode = <0>;
+                /*zed,nand-has-dma;*/
+                partition@0 {
+                        label = "test0-256MB";
+                        reg = <0x00000000 0x10000000>;
+                };
+                partition@1 {
+                        label = "test1-256MB";
+                        reg = <0x10000000 0x10000000>;
+                };
+	};
+		
 };
 
 &clkc {

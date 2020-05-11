@@ -359,7 +359,9 @@ include scripts/subarch.include
 # Alternatively CROSS_COMPILE can be set in the environment.
 # Default value for CROSS_COMPILE is not to prefix executables
 # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
-ARCH		?= $(SUBARCH)
+ARCH		?= arm
+#CROSS_COMPILE   ?= /crosstools/zynq_tools/source/bin/arm-xilinx-linux-gnueabi-
+CROSS_COMPILE   ?= /crosstools/gcc-linaro-5.5.0-2017.10-i686_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
 
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)

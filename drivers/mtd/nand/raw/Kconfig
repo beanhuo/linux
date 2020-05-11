@@ -158,6 +158,11 @@ config MTD_NAND_CS553X
 
 	  If you say "m", the module will be called cs553x_nand.
 
+config MTD_ZED_PL_NAND
+	tristate "zynq zed pl NAND controller support"
+	help
+	   This Micron parallel NAND controller
+
 config MTD_NAND_ATMEL
 	tristate "Atmel AT91 NAND Flash/SmartMedia NAND controller"
 	depends on ARCH_AT91 || COMPILE_TEST
