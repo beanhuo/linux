@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 #ifndef _XILINX_PHY_H
 #define _XILINX_PHY_H
 
@@ -15,5 +16,6 @@
 #define XAE_PHY_TYPE_SGMII		4
 #define XAE_PHY_TYPE_1000BASE_X		5
 #define XAE_PHY_TYPE_2500		6
+#define XXE_PHY_TYPE_USXGMII		7
 
 #endif /* _XILINX_PHY_H */

@@ -1,6 +1,5 @@
-/* -*- mode: c; c-basic-offset: 8; -*-
- * vim: noexpandtab sw=8 ts=8 sts=0:
- *
+// SPDX-License-Identifier: GPL-2.0-only
+/*
  * xattr.c
  *
  * Copyright (C) 2004, 2008 Oracle.  All rights reserved.
@@ -8,15 +7,6 @@
  * CREDITS:
  * Lots of code in this file is copy from linux/fs/ext3/xattr.c.
  * Copyright (C) 2001-2003 Andreas Gruenbacher, <agruen@suse.de>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
- * License version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
  */
 
 #include <linux/capability.h>
@@ -638,14 +628,17 @@ int ocfs2_calc_xattr_init(struct inode *dir,
 						     si->value_len);
 
 	if (osb->s_mount_opt & OCFS2_MOUNT_POSIX_ACL) {
+		down_read(&OCFS2_I(dir)->ip_xattr_sem);
 		acl_len = ocfs2_xattr_get_nolock(dir, dir_bh,
 					OCFS2_XATTR_INDEX_POSIX_ACL_DEFAULT,
 					"", NULL, 0);
+		up_read(&OCFS2_I(dir)->ip_xattr_sem);
 		if (acl_len > 0) {
 			a_size = ocfs2_xattr_entry_real_size(0, acl_len);
 			if (S_ISDIR(mode))
 				a_size <<= 1;
 		} else if (acl_len != 0 && acl_len != -ENODATA) {
+			ret = acl_len;
 			mlog_errno(ret);
 			return ret;
 		}
@@ -901,7 +894,7 @@ static int ocfs2_xattr_list_entry(struct super_block *sb,
 
 	case OCFS2_XATTR_INDEX_POSIX_ACL_ACCESS:
 	case OCFS2_XATTR_INDEX_POSIX_ACL_DEFAULT:
-		if (!(sb->s_flags & MS_POSIXACL))
+		if (!(sb->s_flags & SB_POSIXACL))
 			return 0;
 		break;
 
@@ -1216,7 +1209,7 @@ static int ocfs2_xattr_block_get(struct inode *inode,
 	struct ocfs2_xattr_value_root *xv;
 	size_t size;
 	int ret = -ENODATA, name_offset, name_len, i;
-	int uninitialized_var(block_off);
+	int block_off;
 
 	xs->bucket = ocfs2_xattr_bucket_new(inode);
 	if (!xs->bucket) {
@@ -1328,20 +1321,21 @@ static int ocfs2_xattr_get(struct inode *inode,
 			   void *buffer,
 			   size_t buffer_size)
 {
-	int ret;
+	int ret, had_lock;
 	struct buffer_head *di_bh = NULL;
+	struct ocfs2_lock_holder oh;
 
-	ret = ocfs2_inode_lock(inode, &di_bh, 0);
-	if (ret < 0) {
-		mlog_errno(ret);
-		return ret;
+	had_lock = ocfs2_inode_lock_tracker(inode, &di_bh, 0, &oh);
+	if (had_lock < 0) {
+		mlog_errno(had_lock);
+		return had_lock;
 	}
 	down_read(&OCFS2_I(inode)->ip_xattr_sem);
 	ret = ocfs2_xattr_get_nolock(inode, di_bh, name_index,
 				     name, buffer, buffer_size);
 	up_read(&OCFS2_I(inode)->ip_xattr_sem);
 
-	ocfs2_inode_unlock(inode, 0);
+	ocfs2_inode_unlock_tracker(inode, 0, &oh, had_lock);
 
 	brelse(di_bh);
 
@@ -2577,7 +2571,7 @@ int ocfs2_xattr_remove(struct inode *inode, struct buffer_head *di_bh)
 	if (!(oi->ip_dyn_features & OCFS2_HAS_XATTR_FL))
 		return 0;
 
-	if (OCFS2_I(inode)->ip_dyn_features & OCFS2_HAS_REFCOUNT_FL) {
+	if (ocfs2_is_refcount_inode(inode)) {
 		ret = ocfs2_lock_refcount_tree(OCFS2_SB(inode->i_sb),
 					       le64_to_cpu(di->i_refcount_loc),
 					       1, &ref_tree, &ref_root_bh);
@@ -3537,11 +3531,12 @@ int ocfs2_xattr_set(struct inode *inode,
 {
 	struct buffer_head *di_bh = NULL;
 	struct ocfs2_dinode *di;
-	int ret, credits, ref_meta = 0, ref_credits = 0;
+	int ret, credits, had_lock, ref_meta = 0, ref_credits = 0;
 	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
 	struct inode *tl_inode = osb->osb_tl_inode;
 	struct ocfs2_xattr_set_ctxt ctxt = { NULL, NULL, NULL, };
 	struct ocfs2_refcount_tree *ref_tree = NULL;
+	struct ocfs2_lock_holder oh;
 
 	struct ocfs2_xattr_info xi = {
 		.xi_name_index = name_index,
@@ -3559,7 +3554,7 @@ int ocfs2_xattr_set(struct inode *inode,
 		.not_found = -ENODATA,
 	};
 
-	if (!ocfs2_supports_xattr(OCFS2_SB(inode->i_sb)))
+	if (!ocfs2_supports_xattr(osb))
 		return -EOPNOTSUPP;
 
 	/*
@@ -3572,8 +3567,9 @@ int ocfs2_xattr_set(struct inode *inode,
 		return -ENOMEM;
 	}
 
-	ret = ocfs2_inode_lock(inode, &di_bh, 1);
-	if (ret < 0) {
+	had_lock = ocfs2_inode_lock_tracker(inode, &di_bh, 1, &oh);
+	if (had_lock < 0) {
+		ret = had_lock;
 		mlog_errno(ret);
 		goto cleanup_nolock;
 	}
@@ -3608,7 +3604,7 @@ int ocfs2_xattr_set(struct inode *inode,
 	}
 
 	/* Check whether the value is refcounted and do some preparation. */
-	if (OCFS2_I(inode)->ip_dyn_features & OCFS2_HAS_REFCOUNT_FL &&
+	if (ocfs2_is_refcount_inode(inode) &&
 	    (!xis.not_found || !xbs.not_found)) {
 		ret = ocfs2_prepare_refcount_xattr(inode, di, &xi,
 						   &xis, &xbs, &ref_tree,
@@ -3670,7 +3666,7 @@ cleanup:
 		if (ret)
 			mlog_errno(ret);
 	}
-	ocfs2_inode_unlock(inode, 1);
+	ocfs2_inode_unlock_tracker(inode, 1, &oh, had_lock);
 cleanup_nolock:
 	brelse(di_bh);
 	brelse(xbs.xattr_bh);
@@ -3827,7 +3823,6 @@ static int ocfs2_xattr_bucket_find(struct inode *inode,
 	u16 blk_per_bucket = ocfs2_blocks_per_xattr_bucket(inode->i_sb);
 	int low_bucket = 0, bucket, high_bucket;
 	struct ocfs2_xattr_bucket *search;
-	u32 last_hash;
 	u64 blkno, lower_blkno = 0;
 
 	search = ocfs2_xattr_bucket_new(inode);
@@ -3870,8 +3865,6 @@ static int ocfs2_xattr_bucket_find(struct inode *inode,
 		 */
 		if (xh->xh_count)
 			xe = &xh->xh_entries[le16_to_cpu(xh->xh_count) - 1];
-
-		last_hash = le32_to_cpu(xe->xe_name_hash);
 
 		/* record lower_blkno which may be the insert place. */
 		lower_blkno = blkno;
@@ -6412,7 +6405,7 @@ static int ocfs2_reflink_xattr_header(handle_t *handle,
 		 * and then insert the extents one by one.
 		 */
 		if (xv->xr_list.l_tree_depth) {
-			memcpy(new_xv, &def_xv, sizeof(def_xv));
+			memcpy(new_xv, &def_xv, OCFS2_XATTR_ROOT_SIZE);
 			vb->vb_xv = new_xv;
 			vb->vb_bh = value_bh;
 			ocfs2_init_xattr_value_extent_tree(&data_et,
@@ -6797,7 +6790,7 @@ static int ocfs2_lock_reflink_xattr_rec_allocators(
 		*credits += 1;
 
 	/* count in the xattr tree change. */
-	num_free_extents = ocfs2_num_free_extents(osb, xt_et);
+	num_free_extents = ocfs2_num_free_extents(xt_et);
 	if (num_free_extents < 0) {
 		ret = num_free_extents;
 		mlog_errno(ret);
@@ -7212,7 +7205,7 @@ out:
  * Used for reflink a non-preserve-security file.
  *
  * It uses common api like ocfs2_xattr_set, so the caller
- * must not hold any lock expect i_mutex.
+ * must not hold any lock expect i_rwsem.
  */
 int ocfs2_init_security_and_acl(struct inode *dir,
 				struct inode *inode,
@@ -7254,6 +7247,7 @@ static int ocfs2_xattr_security_get(const struct xattr_handler *handler,
 }
 
 static int ocfs2_xattr_security_set(const struct xattr_handler *handler,
+				    struct user_namespace *mnt_userns,
 				    struct dentry *unused, struct inode *inode,
 				    const char *name, const void *value,
 				    size_t size, int flags)
@@ -7326,6 +7320,7 @@ static int ocfs2_xattr_trusted_get(const struct xattr_handler *handler,
 }
 
 static int ocfs2_xattr_trusted_set(const struct xattr_handler *handler,
+				   struct user_namespace *mnt_userns,
 				   struct dentry *unused, struct inode *inode,
 				   const char *name, const void *value,
 				   size_t size, int flags)
@@ -7356,6 +7351,7 @@ static int ocfs2_xattr_user_get(const struct xattr_handler *handler,
 }
 
 static int ocfs2_xattr_user_set(const struct xattr_handler *handler,
+				struct user_namespace *mnt_userns,
 				struct dentry *unused, struct inode *inode,
 				const char *name, const void *value,
 				size_t size, int flags)

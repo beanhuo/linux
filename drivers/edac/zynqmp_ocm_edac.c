@@ -1,22 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Xilinx ZynqMP OCM ECC Driver
  * This driver is based on mpc85xx_edac.c drivers
  *
- * Copyright (C) 2016 Xilinx, Inc.
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * This file is subject to the terms and conditions of the GNU General Public
- * License.  See the file "COPYING" in the main directory of this archive
- * for more details
+ * Copyright (C) 2016 - 2021 Xilinx, Inc.
  */
 
 #include <linux/edac.h>
@@ -26,7 +13,7 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 
-#include "edac_core.h"
+#include "edac_module.h"
 
 #define ZYNQMP_OCM_EDAC_MSG_SIZE	256
 
@@ -280,7 +267,7 @@ static ssize_t zynqmp_ocm_edac_inject_fault_count_store(
 	if (!data)
 		return -EFAULT;
 
-	if (kstrtoint(data, 0, &ficount))
+	if (kstrtouint(data, 0, &ficount))
 		return -EINVAL;
 
 	ficount &= OCM_FICOUNT_MASK;
@@ -425,7 +412,7 @@ static ssize_t zynqmp_ocm_edac_inject_uebitpos1_show(
 }
 
 /**
- * zynqmp_ocm_edac_inject_uebitposition1_store - Set UE second bit postion
+ * zynqmp_ocm_edac_inject_uebitpos1_store - Set UE second bit postion
  * @dci:	Pointer to the edac device struct
  * @data:	Pointer to user data
  * @count:	read the size bytes from buffer

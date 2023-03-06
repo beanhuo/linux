@@ -32,6 +32,7 @@
 
 #include <linux/tcp.h>
 #include <linux/ipv6.h>
+#include <net/inet_ecn.h>
 #include <net/route.h>
 #include <net/ip6_route.h>
 
@@ -99,7 +100,7 @@ cxgb_find_route(struct cxgb4_lld_info *lldi,
 
 	rt = ip_route_output_ports(&init_net, &fl4, NULL, peer_ip, local_ip,
 				   peer_port, local_port, IPPROTO_TCP,
-				   tos, 0);
+				   tos & ~INET_ECN_MASK, 0);
 	if (IS_ERR(rt))
 		return NULL;
 	n = dst_neigh_lookup(&rt->dst, &peer_ip);
@@ -133,17 +134,15 @@ cxgb_find_route6(struct cxgb4_lld_info *lldi,
 		if (ipv6_addr_type(&fl6.daddr) & IPV6_ADDR_LINKLOCAL)
 			fl6.flowi6_oif = sin6_scope_id;
 		dst = ip6_route_output(&init_net, NULL, &fl6);
-		if (!dst)
-			goto out;
-		if (!cxgb_our_interface(lldi, get_real_dev,
-					ip6_dst_idev(dst)->dev) &&
-		    !(ip6_dst_idev(dst)->dev->flags & IFF_LOOPBACK)) {
+		if (dst->error ||
+		    (!cxgb_our_interface(lldi, get_real_dev,
+					 ip6_dst_idev(dst)->dev) &&
+		     !(ip6_dst_idev(dst)->dev->flags & IFF_LOOPBACK))) {
 			dst_release(dst);
-			dst = NULL;
+			return NULL;
 		}
 	}
 
-out:
 	return dst;
 }
 EXPORT_SYMBOL(cxgb_find_route6);

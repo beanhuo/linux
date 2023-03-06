@@ -100,7 +100,7 @@ struct xilinxfb_platform_data {
 /*
  * Default xilinxfb configuration
  */
-static struct xilinxfb_platform_data xilinx_fb_default_pdata = {
+static const struct xilinxfb_platform_data xilinx_fb_default_pdata = {
 	.xres = 640,
 	.yres = 480,
 	.xvirt = 1024,
@@ -110,14 +110,14 @@ static struct xilinxfb_platform_data xilinx_fb_default_pdata = {
 /*
  * Here are the default fb_fix_screeninfo and fb_var_screeninfo structures
  */
-static struct fb_fix_screeninfo xilinx_fb_fix = {
+static const struct fb_fix_screeninfo xilinx_fb_fix = {
 	.id =		"Xilinx",
 	.type =		FB_TYPE_PACKED_PIXELS,
 	.visual =	FB_VISUAL_TRUECOLOR,
 	.accel =	FB_ACCEL_NONE
 };
 
-static struct fb_var_screeninfo xilinx_fb_var = {
+static const struct fb_var_screeninfo xilinx_fb_var = {
 	.bits_per_pixel =	BITS_PER_PIXEL,
 
 	.red =		{ RED_SHIFT, 8, 0 },
@@ -241,13 +241,15 @@ xilinx_fb_blank(int blank_mode, struct fb_info *fbi)
 	case FB_BLANK_POWERDOWN:
 		/* turn off panel */
 		xilinx_fb_out32(drvdata, REG_CTRL, 0);
+		break;
+
 	default:
 		break;
 	}
 	return 0; /* success */
 }
 
-static struct fb_ops xilinxfb_ops = {
+static const struct fb_ops xilinxfb_ops = {
 	.owner			= THIS_MODULE,
 	.fb_setcolreg		= xilinx_fb_setcolreg,
 	.fb_blank		= xilinx_fb_blank,
@@ -286,7 +288,8 @@ static int xilinxfb_assign(struct platform_device *pdev,
 	} else {
 		drvdata->fb_alloced = 1;
 		drvdata->fb_virt = dma_alloc_coherent(dev, PAGE_ALIGN(fbsize),
-					&drvdata->fb_phys, GFP_KERNEL);
+						      &drvdata->fb_phys,
+						      GFP_KERNEL);
 	}
 
 	if (!drvdata->fb_virt) {
@@ -373,7 +376,7 @@ err_cmap:
 	return rc;
 }
 
-static int xilinxfb_release(struct device *dev)
+static void xilinxfb_release(struct device *dev)
 {
 	struct xilinxfb_drvdata *drvdata = dev_get_drvdata(dev);
 
@@ -399,8 +402,6 @@ static int xilinxfb_release(struct device *dev)
 	if (!(drvdata->flags & BUS_ACCESS_FLAG))
 		dcr_unmap(drvdata->dcr_host, drvdata->dcr_len);
 #endif
-
-	return 0;
 }
 
 /* ---------------------------------------------------------------------
@@ -471,13 +472,15 @@ static int xilinxfb_of_probe(struct platform_device *pdev)
 	if (of_find_property(pdev->dev.of_node, "rotate-display", NULL))
 		pdata.rotate_screen = 1;
 
-	dev_set_drvdata(&pdev->dev, drvdata);
+	platform_set_drvdata(pdev, drvdata);
 	return xilinxfb_assign(pdev, drvdata, &pdata);
 }
 
 static int xilinxfb_of_remove(struct platform_device *op)
 {
-	return xilinxfb_release(&op->dev);
+	xilinxfb_release(&op->dev);
+
+	return 0;
 }
 
 /* Match table for of_platform binding */

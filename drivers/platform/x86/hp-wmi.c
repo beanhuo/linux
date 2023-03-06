@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * HP WMI hotkeys
  *
@@ -8,20 +9,6 @@
  * Copyright (C) 2005 Miloslav Trmac <mitr@volny.cz>
  * Copyright (C) 2005 Bernhard Rosenkraenzer <bero@arklinux.org>
  * Copyright (C) 2005 Dmitry Torokhov <dtor@mail.ru>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -34,9 +21,12 @@
 #include <linux/input.h>
 #include <linux/input/sparse-keymap.h>
 #include <linux/platform_device.h>
+#include <linux/platform_profile.h>
+#include <linux/hwmon.h>
 #include <linux/acpi.h>
 #include <linux/rfkill.h>
 #include <linux/string.h>
+#include <linux/dmi.h>
 
 MODULE_AUTHOR("Matthew Garrett <mjg59@srcf.ucam.org>");
 MODULE_DESCRIPTION("HP laptop WMI hotkeys driver");
@@ -47,50 +37,110 @@ MODULE_ALIAS("wmi:5FB7F034-2C63-45e9-BE91-3D44E2C707E4");
 
 #define HPWMI_EVENT_GUID "95F24279-4D7B-4334-9387-ACCDC67EF61C"
 #define HPWMI_BIOS_GUID "5FB7F034-2C63-45e9-BE91-3D44E2C707E4"
+#define HP_OMEN_EC_THERMAL_PROFILE_OFFSET 0x95
+#define zero_if_sup(tmp) (zero_insize_support?0:sizeof(tmp)) // use when zero insize is required
 
-#define HPWMI_DISPLAY_QUERY 0x1
-#define HPWMI_HDDTEMP_QUERY 0x2
-#define HPWMI_ALS_QUERY 0x3
-#define HPWMI_HARDWARE_QUERY 0x4
-#define HPWMI_WIRELESS_QUERY 0x5
-#define HPWMI_BIOS_QUERY 0x9
-#define HPWMI_FEATURE_QUERY 0xb
-#define HPWMI_HOTKEY_QUERY 0xc
-#define HPWMI_FEATURE2_QUERY 0xd
-#define HPWMI_WIRELESS2_QUERY 0x1b
-#define HPWMI_POSTCODEERROR_QUERY 0x2a
+/* DMI board names of devices that should use the omen specific path for
+ * thermal profiles.
+ * This was obtained by taking a look in the windows omen command center
+ * app and parsing a json file that they use to figure out what capabilities
+ * the device should have.
+ * A device is considered an omen if the DisplayName in that list contains
+ * "OMEN", and it can use the thermal profile stuff if the "Feature" array
+ * contains "PerformanceControl".
+ */
+static const char * const omen_thermal_profile_boards[] = {
+	"84DA", "84DB", "84DC", "8574", "8575", "860A", "87B5", "8572", "8573",
+	"8600", "8601", "8602", "8605", "8606", "8607", "8746", "8747", "8749",
+	"874A", "8603", "8604", "8748", "886B", "886C", "878A", "878B", "878C",
+	"88C8", "88CB", "8786", "8787", "8788", "88D1", "88D2", "88F4", "88FD",
+	"88F5", "88F6", "88F7", "88FE", "88FF", "8900", "8901", "8902", "8912",
+	"8917", "8918", "8949", "894A", "89EB"
+};
+
+/* DMI Board names of Omen laptops that are specifically set to be thermal
+ * profile version 0 by the Omen Command Center app, regardless of what
+ * the get system design information WMI call returns
+ */
+static const char *const omen_thermal_profile_force_v0_boards[] = {
+	"8607", "8746", "8747", "8749", "874A", "8748"
+};
 
 enum hp_wmi_radio {
-	HPWMI_WIFI = 0,
-	HPWMI_BLUETOOTH = 1,
-	HPWMI_WWAN = 2,
-	HPWMI_GPS = 3,
+	HPWMI_WIFI	= 0x0,
+	HPWMI_BLUETOOTH	= 0x1,
+	HPWMI_WWAN	= 0x2,
+	HPWMI_GPS	= 0x3,
 };
 
 enum hp_wmi_event_ids {
-	HPWMI_DOCK_EVENT = 1,
-	HPWMI_PARK_HDD = 2,
-	HPWMI_SMART_ADAPTER = 3,
-	HPWMI_BEZEL_BUTTON = 4,
-	HPWMI_WIRELESS = 5,
-	HPWMI_CPU_BATTERY_THROTTLE = 6,
-	HPWMI_LOCK_SWITCH = 7,
-	HPWMI_LID_SWITCH = 8,
-	HPWMI_SCREEN_ROTATION = 9,
-	HPWMI_COOLSENSE_SYSTEM_MOBILE = 0x0A,
-	HPWMI_COOLSENSE_SYSTEM_HOT = 0x0B,
-	HPWMI_PROXIMITY_SENSOR = 0x0C,
-	HPWMI_BACKLIT_KB_BRIGHTNESS = 0x0D,
-	HPWMI_PEAKSHIFT_PERIOD = 0x0F,
-	HPWMI_BATTERY_CHARGE_PERIOD = 0x10,
+	HPWMI_DOCK_EVENT		= 0x01,
+	HPWMI_PARK_HDD			= 0x02,
+	HPWMI_SMART_ADAPTER		= 0x03,
+	HPWMI_BEZEL_BUTTON		= 0x04,
+	HPWMI_WIRELESS			= 0x05,
+	HPWMI_CPU_BATTERY_THROTTLE	= 0x06,
+	HPWMI_LOCK_SWITCH		= 0x07,
+	HPWMI_LID_SWITCH		= 0x08,
+	HPWMI_SCREEN_ROTATION		= 0x09,
+	HPWMI_COOLSENSE_SYSTEM_MOBILE	= 0x0A,
+	HPWMI_COOLSENSE_SYSTEM_HOT	= 0x0B,
+	HPWMI_PROXIMITY_SENSOR		= 0x0C,
+	HPWMI_BACKLIT_KB_BRIGHTNESS	= 0x0D,
+	HPWMI_PEAKSHIFT_PERIOD		= 0x0F,
+	HPWMI_BATTERY_CHARGE_PERIOD	= 0x10,
+	HPWMI_SANITIZATION_MODE		= 0x17,
+	HPWMI_SMART_EXPERIENCE_APP	= 0x21,
 };
 
+/*
+ * struct bios_args buffer is dynamically allocated.  New WMI command types
+ * were introduced that exceeds 128-byte data size.  Changes to handle
+ * the data size allocation scheme were kept in hp_wmi_perform_qurey function.
+ */
 struct bios_args {
 	u32 signature;
 	u32 command;
 	u32 commandtype;
 	u32 datasize;
-	u32 data;
+	u8 data[];
+};
+
+enum hp_wmi_commandtype {
+	HPWMI_DISPLAY_QUERY		= 0x01,
+	HPWMI_HDDTEMP_QUERY		= 0x02,
+	HPWMI_ALS_QUERY			= 0x03,
+	HPWMI_HARDWARE_QUERY		= 0x04,
+	HPWMI_WIRELESS_QUERY		= 0x05,
+	HPWMI_BATTERY_QUERY		= 0x07,
+	HPWMI_BIOS_QUERY		= 0x09,
+	HPWMI_FEATURE_QUERY		= 0x0b,
+	HPWMI_HOTKEY_QUERY		= 0x0c,
+	HPWMI_FEATURE2_QUERY		= 0x0d,
+	HPWMI_WIRELESS2_QUERY		= 0x1b,
+	HPWMI_POSTCODEERROR_QUERY	= 0x2a,
+	HPWMI_SYSTEM_DEVICE_MODE	= 0x40,
+	HPWMI_THERMAL_PROFILE_QUERY	= 0x4c,
+};
+
+enum hp_wmi_gm_commandtype {
+	HPWMI_FAN_SPEED_GET_QUERY = 0x11,
+	HPWMI_SET_PERFORMANCE_MODE = 0x1A,
+	HPWMI_FAN_SPEED_MAX_GET_QUERY = 0x26,
+	HPWMI_FAN_SPEED_MAX_SET_QUERY = 0x27,
+	HPWMI_GET_SYSTEM_DESIGN_DATA = 0x28,
+};
+
+enum hp_wmi_command {
+	HPWMI_READ	= 0x01,
+	HPWMI_WRITE	= 0x02,
+	HPWMI_ODM	= 0x03,
+	HPWMI_GM	= 0x20008,
+};
+
+enum hp_wmi_hardware_mask {
+	HPWMI_DOCK_MASK		= 0x01,
+	HPWMI_TABLET_MASK	= 0x04,
 };
 
 struct bios_return {
@@ -110,10 +160,29 @@ enum hp_wireless2_bits {
 	HPWMI_POWER_SOFT	= 0x02,
 	HPWMI_POWER_BIOS	= 0x04,
 	HPWMI_POWER_HARD	= 0x08,
+	HPWMI_POWER_FW_OR_HW	= HPWMI_POWER_BIOS | HPWMI_POWER_HARD,
 };
 
-#define IS_HWBLOCKED(x) ((x & (HPWMI_POWER_BIOS | HPWMI_POWER_HARD)) \
-			 != (HPWMI_POWER_BIOS | HPWMI_POWER_HARD))
+enum hp_thermal_profile_omen_v0 {
+	HP_OMEN_V0_THERMAL_PROFILE_DEFAULT     = 0x00,
+	HP_OMEN_V0_THERMAL_PROFILE_PERFORMANCE = 0x01,
+	HP_OMEN_V0_THERMAL_PROFILE_COOL        = 0x02,
+};
+
+enum hp_thermal_profile_omen_v1 {
+	HP_OMEN_V1_THERMAL_PROFILE_DEFAULT	= 0x30,
+	HP_OMEN_V1_THERMAL_PROFILE_PERFORMANCE	= 0x31,
+	HP_OMEN_V1_THERMAL_PROFILE_COOL		= 0x50,
+};
+
+enum hp_thermal_profile {
+	HP_THERMAL_PROFILE_PERFORMANCE	= 0x00,
+	HP_THERMAL_PROFILE_DEFAULT		= 0x01,
+	HP_THERMAL_PROFILE_COOL			= 0x02,
+	HP_THERMAL_PROFILE_QUIET		= 0x03,
+};
+
+#define IS_HWBLOCKED(x) ((x & HPWMI_POWER_FW_OR_HW) != HPWMI_POWER_FW_OR_HW)
 #define IS_SWBLOCKED(x) !(x & HPWMI_POWER_SOFT)
 
 struct bios_rfkill2_device_state {
@@ -139,20 +208,25 @@ struct bios_rfkill2_state {
 };
 
 static const struct key_entry hp_wmi_keymap[] = {
-	{ KE_KEY, 0x02,   { KEY_BRIGHTNESSUP } },
-	{ KE_KEY, 0x03,   { KEY_BRIGHTNESSDOWN } },
-	{ KE_KEY, 0x20e6, { KEY_PROG1 } },
-	{ KE_KEY, 0x20e8, { KEY_MEDIA } },
-	{ KE_KEY, 0x2142, { KEY_MEDIA } },
-	{ KE_KEY, 0x213b, { KEY_INFO } },
-	{ KE_KEY, 0x2169, { KEY_ROTATE_DISPLAY } },
-	{ KE_KEY, 0x216a, { KEY_SETUP } },
-	{ KE_KEY, 0x231b, { KEY_HELP } },
+	{ KE_KEY, 0x02,    { KEY_BRIGHTNESSUP } },
+	{ KE_KEY, 0x03,    { KEY_BRIGHTNESSDOWN } },
+	{ KE_KEY, 0x20e6,  { KEY_PROG1 } },
+	{ KE_KEY, 0x20e8,  { KEY_MEDIA } },
+	{ KE_KEY, 0x2142,  { KEY_MEDIA } },
+	{ KE_KEY, 0x213b,  { KEY_INFO } },
+	{ KE_KEY, 0x2169,  { KEY_ROTATE_DISPLAY } },
+	{ KE_KEY, 0x216a,  { KEY_SETUP } },
+	{ KE_KEY, 0x21a9,  { KEY_TOUCHPAD_OFF } },
+	{ KE_KEY, 0x121a9, { KEY_TOUCHPAD_ON } },
+	{ KE_KEY, 0x231b,  { KEY_HELP } },
 	{ KE_END, 0 }
 };
 
 static struct input_dev *hp_wmi_input_dev;
 static struct platform_device *hp_wmi_platform_dev;
+static struct platform_profile_handler platform_profile_handler;
+static bool platform_profile_support;
+static bool zero_insize_support;
 
 static struct rfkill *wifi_rfkill;
 static struct rfkill *bluetooth_rfkill;
@@ -168,10 +242,39 @@ static int rfkill2_count;
 static struct rfkill2_device rfkill2[HPWMI_MAX_RFKILL2_DEVICES];
 
 /*
+ * Chassis Types values were obtained from SMBIOS reference
+ * specification version 3.00. A complete list of system enclosures
+ * and chassis types is available on Table 17.
+ */
+static const char * const tablet_chassis_types[] = {
+	"30", /* Tablet*/
+	"31", /* Convertible */
+	"32"  /* Detachable */
+};
+
+#define DEVICE_MODE_TABLET	0x06
+
+/* map output size to the corresponding WMI method id */
+static inline int encode_outsize_for_pvsz(int outsize)
+{
+	if (outsize > 4096)
+		return -EINVAL;
+	if (outsize > 1024)
+		return 5;
+	if (outsize > 128)
+		return 4;
+	if (outsize > 4)
+		return 3;
+	if (outsize > 0)
+		return 2;
+	return 1;
+}
+
+/*
  * hp_wmi_perform_query
  *
- * query:	The commandtype -> What should be queried
- * write:	The command -> 0 read, 1 write, 3 ODM specific
+ * query:	The commandtype (enum hp_wmi_commandtype)
+ * write:	The command (enum hp_wmi_command)
  * buffer:	Buffer used as input and/or output
  * insize:	Size of input buffer
  * outsize:	Size of output buffer
@@ -182,124 +285,241 @@ static struct rfkill2_device rfkill2[HPWMI_MAX_RFKILL2_DEVICES];
  *         -EINVAL if the output buffer size exceeds buffersize
  *
  * Note: The buffersize must at least be the maximum of the input and output
- *       size. E.g. Battery info query (0x7) is defined to have 1 byte input
+ *       size. E.g. Battery info query is defined to have 1 byte input
  *       and 128 byte output. The caller would do:
  *       buffer = kzalloc(128, GFP_KERNEL);
- *       ret = hp_wmi_perform_query(0x7, 0, buffer, 1, 128)
+ *       ret = hp_wmi_perform_query(HPWMI_BATTERY_QUERY, HPWMI_READ, buffer, 1, 128)
  */
-static int hp_wmi_perform_query(int query, int write, void *buffer,
-				int insize, int outsize)
+static int hp_wmi_perform_query(int query, enum hp_wmi_command command,
+				void *buffer, int insize, int outsize)
 {
+	struct acpi_buffer input, output = { ACPI_ALLOCATE_BUFFER, NULL };
 	struct bios_return *bios_return;
-	int actual_outsize;
-	union acpi_object *obj;
-	struct bios_args args = {
-		.signature = 0x55434553,
-		.command = write ? 0x2 : 0x1,
-		.commandtype = query,
-		.datasize = insize,
-		.data = 0,
-	};
-	struct acpi_buffer input = { sizeof(struct bios_args), &args };
-	struct acpi_buffer output = { ACPI_ALLOCATE_BUFFER, NULL };
-	u32 rc;
+	union acpi_object *obj = NULL;
+	struct bios_args *args = NULL;
+	int mid, actual_insize, actual_outsize;
+	size_t bios_args_size;
+	int ret;
 
-	if (WARN_ON(insize > sizeof(args.data)))
-		return -EINVAL;
-	memcpy(&args.data, buffer, insize);
+	mid = encode_outsize_for_pvsz(outsize);
+	if (WARN_ON(mid < 0))
+		return mid;
 
-	wmi_evaluate_method(HPWMI_BIOS_GUID, 0, 0x3, &input, &output);
+	actual_insize = max(insize, 128);
+	bios_args_size = struct_size(args, data, actual_insize);
+	args = kmalloc(bios_args_size, GFP_KERNEL);
+	if (!args)
+		return -ENOMEM;
+
+	input.length = bios_args_size;
+	input.pointer = args;
+
+	args->signature = 0x55434553;
+	args->command = command;
+	args->commandtype = query;
+	args->datasize = insize;
+	memcpy(args->data, buffer, flex_array_size(args, data, insize));
+
+	ret = wmi_evaluate_method(HPWMI_BIOS_GUID, 0, mid, &input, &output);
+	if (ret)
+		goto out_free;
 
 	obj = output.pointer;
+	if (!obj) {
+		ret = -EINVAL;
+		goto out_free;
+	}
 
-	if (!obj)
-		return -EINVAL;
-	else if (obj->type != ACPI_TYPE_BUFFER) {
-		kfree(obj);
-		return -EINVAL;
+	if (obj->type != ACPI_TYPE_BUFFER) {
+		pr_warn("query 0x%x returned an invalid object 0x%x\n", query, ret);
+		ret = -EINVAL;
+		goto out_free;
 	}
 
 	bios_return = (struct bios_return *)obj->buffer.pointer;
-	rc = bios_return->return_code;
+	ret = bios_return->return_code;
 
-	if (rc) {
-		if (rc != HPWMI_RET_UNKNOWN_CMDTYPE)
-			pr_warn("query 0x%x returned error 0x%x\n", query, rc);
-		kfree(obj);
-		return rc;
+	if (ret) {
+		if (ret != HPWMI_RET_UNKNOWN_COMMAND &&
+		    ret != HPWMI_RET_UNKNOWN_CMDTYPE)
+			pr_warn("query 0x%x returned error 0x%x\n", query, ret);
+		goto out_free;
 	}
 
-	if (!outsize) {
-		/* ignore output data */
-		kfree(obj);
-		return 0;
-	}
+	/* Ignore output data of zero size */
+	if (!outsize)
+		goto out_free;
 
 	actual_outsize = min(outsize, (int)(obj->buffer.length - sizeof(*bios_return)));
 	memcpy(buffer, obj->buffer.pointer + sizeof(*bios_return), actual_outsize);
 	memset(buffer + actual_outsize, 0, outsize - actual_outsize);
+
+out_free:
 	kfree(obj);
-	return 0;
+	kfree(args);
+	return ret;
 }
 
-static int hp_wmi_display_state(void)
+static int hp_wmi_get_fan_speed(int fan)
 {
-	int state = 0;
-	int ret = hp_wmi_perform_query(HPWMI_DISPLAY_QUERY, 0, &state,
-				       sizeof(state), sizeof(state));
-	if (ret)
-		return -EINVAL;
-	return state;
-}
+	u8 fsh, fsl;
+	char fan_data[4] = { fan, 0, 0, 0 };
 
-static int hp_wmi_hddtemp_state(void)
-{
-	int state = 0;
-	int ret = hp_wmi_perform_query(HPWMI_HDDTEMP_QUERY, 0, &state,
-				       sizeof(state), sizeof(state));
-	if (ret)
-		return -EINVAL;
-	return state;
-}
+	int ret = hp_wmi_perform_query(HPWMI_FAN_SPEED_GET_QUERY, HPWMI_GM,
+				       &fan_data, sizeof(char),
+				       sizeof(fan_data));
 
-static int hp_wmi_als_state(void)
-{
-	int state = 0;
-	int ret = hp_wmi_perform_query(HPWMI_ALS_QUERY, 0, &state,
-				       sizeof(state), sizeof(state));
-	if (ret)
-		return -EINVAL;
-	return state;
-}
-
-static int hp_wmi_dock_state(void)
-{
-	int state = 0;
-	int ret = hp_wmi_perform_query(HPWMI_HARDWARE_QUERY, 0, &state,
-				       sizeof(state), sizeof(state));
-
-	if (ret)
+	if (ret != 0)
 		return -EINVAL;
 
-	return state & 0x1;
+	fsh = fan_data[2];
+	fsl = fan_data[3];
+
+	return (fsh << 8) | fsl;
 }
 
-static int hp_wmi_tablet_state(void)
+static int hp_wmi_read_int(int query)
 {
-	int state = 0;
-	int ret = hp_wmi_perform_query(HPWMI_HARDWARE_QUERY, 0, &state,
-				       sizeof(state), sizeof(state));
+	int val = 0, ret;
+
+	ret = hp_wmi_perform_query(query, HPWMI_READ, &val,
+				   zero_if_sup(val), sizeof(val));
+
+	if (ret)
+		return ret < 0 ? ret : -EINVAL;
+
+	return val;
+}
+
+static int hp_wmi_get_dock_state(void)
+{
+	int state = hp_wmi_read_int(HPWMI_HARDWARE_QUERY);
+
+	if (state < 0)
+		return state;
+
+	return !!(state & HPWMI_DOCK_MASK);
+}
+
+static int hp_wmi_get_tablet_mode(void)
+{
+	char system_device_mode[4] = { 0 };
+	const char *chassis_type;
+	bool tablet_found;
+	int ret;
+
+	chassis_type = dmi_get_system_info(DMI_CHASSIS_TYPE);
+	if (!chassis_type)
+		return -ENODEV;
+
+	tablet_found = match_string(tablet_chassis_types,
+				    ARRAY_SIZE(tablet_chassis_types),
+				    chassis_type) >= 0;
+	if (!tablet_found)
+		return -ENODEV;
+
+	ret = hp_wmi_perform_query(HPWMI_SYSTEM_DEVICE_MODE, HPWMI_READ,
+				   system_device_mode, zero_if_sup(system_device_mode),
+				   sizeof(system_device_mode));
+	if (ret < 0)
+		return ret;
+
+	return system_device_mode[0] == DEVICE_MODE_TABLET;
+}
+
+static int omen_thermal_profile_set(int mode)
+{
+	char buffer[2] = {0, mode};
+	int ret;
+
+	ret = hp_wmi_perform_query(HPWMI_SET_PERFORMANCE_MODE, HPWMI_GM,
+				   &buffer, sizeof(buffer), 0);
+
+	if (ret)
+		return ret < 0 ? ret : -EINVAL;
+
+	return mode;
+}
+
+static bool is_omen_thermal_profile(void)
+{
+	const char *board_name = dmi_get_system_info(DMI_BOARD_NAME);
+
+	if (!board_name)
+		return false;
+
+	return match_string(omen_thermal_profile_boards,
+			    ARRAY_SIZE(omen_thermal_profile_boards),
+			    board_name) >= 0;
+}
+
+static int omen_get_thermal_policy_version(void)
+{
+	unsigned char buffer[8] = { 0 };
+	int ret;
+
+	const char *board_name = dmi_get_system_info(DMI_BOARD_NAME);
+
+	if (board_name) {
+		int matches = match_string(omen_thermal_profile_force_v0_boards,
+			ARRAY_SIZE(omen_thermal_profile_force_v0_boards),
+			board_name);
+		if (matches >= 0)
+			return 0;
+	}
+
+	ret = hp_wmi_perform_query(HPWMI_GET_SYSTEM_DESIGN_DATA, HPWMI_GM,
+				   &buffer, sizeof(buffer), sizeof(buffer));
+
+	if (ret)
+		return ret < 0 ? ret : -EINVAL;
+
+	return buffer[3];
+}
+
+static int omen_thermal_profile_get(void)
+{
+	u8 data;
+
+	int ret = ec_read(HP_OMEN_EC_THERMAL_PROFILE_OFFSET, &data);
+
 	if (ret)
 		return ret;
 
-	return (state & 0x4) ? 1 : 0;
+	return data;
+}
+
+static int hp_wmi_fan_speed_max_set(int enabled)
+{
+	int ret;
+
+	ret = hp_wmi_perform_query(HPWMI_FAN_SPEED_MAX_SET_QUERY, HPWMI_GM,
+				   &enabled, sizeof(enabled), 0);
+
+	if (ret)
+		return ret < 0 ? ret : -EINVAL;
+
+	return enabled;
+}
+
+static int hp_wmi_fan_speed_max_get(void)
+{
+	int val = 0, ret;
+
+	ret = hp_wmi_perform_query(HPWMI_FAN_SPEED_MAX_GET_QUERY, HPWMI_GM,
+				   &val, zero_if_sup(val), sizeof(val));
+
+	if (ret)
+		return ret < 0 ? ret : -EINVAL;
+
+	return val;
 }
 
 static int __init hp_wmi_bios_2008_later(void)
 {
 	int state = 0;
-	int ret = hp_wmi_perform_query(HPWMI_FEATURE_QUERY, 0, &state,
-				       sizeof(state), sizeof(state));
+	int ret = hp_wmi_perform_query(HPWMI_FEATURE_QUERY, HPWMI_READ, &state,
+				       zero_if_sup(state), sizeof(state));
 	if (!ret)
 		return 1;
 
@@ -308,9 +528,9 @@ static int __init hp_wmi_bios_2008_later(void)
 
 static int __init hp_wmi_bios_2009_later(void)
 {
-	int state = 0;
-	int ret = hp_wmi_perform_query(HPWMI_FEATURE2_QUERY, 0, &state,
-				       sizeof(state), sizeof(state));
+	u8 state[128];
+	int ret = hp_wmi_perform_query(HPWMI_FEATURE2_QUERY, HPWMI_READ, &state,
+				       zero_if_sup(state), sizeof(state));
 	if (!ret)
 		return 1;
 
@@ -320,11 +540,10 @@ static int __init hp_wmi_bios_2009_later(void)
 static int __init hp_wmi_enable_hotkeys(void)
 {
 	int value = 0x6e;
-	int ret = hp_wmi_perform_query(HPWMI_BIOS_QUERY, 1, &value,
+	int ret = hp_wmi_perform_query(HPWMI_BIOS_QUERY, HPWMI_WRITE, &value,
 				       sizeof(value), 0);
-	if (ret)
-		return -EINVAL;
-	return 0;
+
+	return ret <= 0 ? ret : -EINVAL;
 }
 
 static int hp_wmi_set_block(void *data, bool blocked)
@@ -333,11 +552,10 @@ static int hp_wmi_set_block(void *data, bool blocked)
 	int query = BIT(r + 8) | ((!blocked) << r);
 	int ret;
 
-	ret = hp_wmi_perform_query(HPWMI_WIRELESS_QUERY, 1,
+	ret = hp_wmi_perform_query(HPWMI_WIRELESS_QUERY, HPWMI_WRITE,
 				   &query, sizeof(query), 0);
-	if (ret)
-		return -EINVAL;
-	return 0;
+
+	return ret <= 0 ? ret : -EINVAL;
 }
 
 static const struct rfkill_ops hp_wmi_rfkill_ops = {
@@ -346,47 +564,38 @@ static const struct rfkill_ops hp_wmi_rfkill_ops = {
 
 static bool hp_wmi_get_sw_state(enum hp_wmi_radio r)
 {
-	int wireless = 0;
-	int mask;
-	hp_wmi_perform_query(HPWMI_WIRELESS_QUERY, 0,
-			     &wireless, sizeof(wireless),
-			     sizeof(wireless));
+	int mask = 0x200 << (r * 8);
+
+	int wireless = hp_wmi_read_int(HPWMI_WIRELESS_QUERY);
+
 	/* TBD: Pass error */
+	WARN_ONCE(wireless < 0, "error executing HPWMI_WIRELESS_QUERY");
 
-	mask = 0x200 << (r * 8);
-
-	if (wireless & mask)
-		return false;
-	else
-		return true;
+	return !(wireless & mask);
 }
 
 static bool hp_wmi_get_hw_state(enum hp_wmi_radio r)
 {
-	int wireless = 0;
-	int mask;
-	hp_wmi_perform_query(HPWMI_WIRELESS_QUERY, 0,
-			     &wireless, sizeof(wireless),
-			     sizeof(wireless));
+	int mask = 0x800 << (r * 8);
+
+	int wireless = hp_wmi_read_int(HPWMI_WIRELESS_QUERY);
+
 	/* TBD: Pass error */
+	WARN_ONCE(wireless < 0, "error executing HPWMI_WIRELESS_QUERY");
 
-	mask = 0x800 << (r * 8);
-
-	if (wireless & mask)
-		return false;
-	else
-		return true;
+	return !(wireless & mask);
 }
 
 static int hp_wmi_rfkill2_set_block(void *data, bool blocked)
 {
 	int rfkill_id = (int)(long)data;
 	char buffer[4] = { 0x01, 0x00, rfkill_id, !blocked };
+	int ret;
 
-	if (hp_wmi_perform_query(HPWMI_WIRELESS2_QUERY, 1,
-				   buffer, sizeof(buffer), 0))
-		return -EINVAL;
-	return 0;
+	ret = hp_wmi_perform_query(HPWMI_WIRELESS2_QUERY, HPWMI_WRITE,
+				   buffer, sizeof(buffer), 0);
+
+	return ret <= 0 ? ret : -EINVAL;
 }
 
 static const struct rfkill_ops hp_wmi_rfkill2_ops = {
@@ -395,17 +604,18 @@ static const struct rfkill_ops hp_wmi_rfkill2_ops = {
 
 static int hp_wmi_rfkill2_refresh(void)
 {
-	int err, i;
 	struct bios_rfkill2_state state;
+	int err, i;
 
-	err = hp_wmi_perform_query(HPWMI_WIRELESS2_QUERY, 0, &state,
-				   0, sizeof(state));
+	err = hp_wmi_perform_query(HPWMI_WIRELESS2_QUERY, HPWMI_READ, &state,
+				   zero_if_sup(state), sizeof(state));
 	if (err)
 		return err;
 
 	for (i = 0; i < rfkill2_count; i++) {
 		int num = rfkill2[i].num;
 		struct bios_rfkill2_device_state *devstate;
+
 		devstate = &state.device[num];
 
 		if (num >= state.count ||
@@ -422,119 +632,134 @@ static int hp_wmi_rfkill2_refresh(void)
 	return 0;
 }
 
-static int hp_wmi_post_code_state(void)
-{
-	int state = 0;
-	int ret = hp_wmi_perform_query(HPWMI_POSTCODEERROR_QUERY, 0, &state,
-				       sizeof(state), sizeof(state));
-	if (ret)
-		return -EINVAL;
-	return state;
-}
-
-static ssize_t show_display(struct device *dev, struct device_attribute *attr,
+static ssize_t display_show(struct device *dev, struct device_attribute *attr,
 			    char *buf)
 {
-	int value = hp_wmi_display_state();
+	int value = hp_wmi_read_int(HPWMI_DISPLAY_QUERY);
+
 	if (value < 0)
-		return -EINVAL;
+		return value;
 	return sprintf(buf, "%d\n", value);
 }
 
-static ssize_t show_hddtemp(struct device *dev, struct device_attribute *attr,
+static ssize_t hddtemp_show(struct device *dev, struct device_attribute *attr,
 			    char *buf)
 {
-	int value = hp_wmi_hddtemp_state();
+	int value = hp_wmi_read_int(HPWMI_HDDTEMP_QUERY);
+
 	if (value < 0)
-		return -EINVAL;
+		return value;
 	return sprintf(buf, "%d\n", value);
 }
 
-static ssize_t show_als(struct device *dev, struct device_attribute *attr,
+static ssize_t als_show(struct device *dev, struct device_attribute *attr,
 			char *buf)
 {
-	int value = hp_wmi_als_state();
+	int value = hp_wmi_read_int(HPWMI_ALS_QUERY);
+
 	if (value < 0)
-		return -EINVAL;
+		return value;
 	return sprintf(buf, "%d\n", value);
 }
 
-static ssize_t show_dock(struct device *dev, struct device_attribute *attr,
+static ssize_t dock_show(struct device *dev, struct device_attribute *attr,
 			 char *buf)
 {
-	int value = hp_wmi_dock_state();
+	int value = hp_wmi_get_dock_state();
+
 	if (value < 0)
-		return -EINVAL;
+		return value;
 	return sprintf(buf, "%d\n", value);
 }
 
-static ssize_t show_tablet(struct device *dev, struct device_attribute *attr,
-			 char *buf)
+static ssize_t tablet_show(struct device *dev, struct device_attribute *attr,
+			   char *buf)
 {
-	int value = hp_wmi_tablet_state();
+	int value = hp_wmi_get_tablet_mode();
+
 	if (value < 0)
-		return -EINVAL;
+		return value;
 	return sprintf(buf, "%d\n", value);
 }
 
-static ssize_t show_postcode(struct device *dev, struct device_attribute *attr,
-			 char *buf)
+static ssize_t postcode_show(struct device *dev, struct device_attribute *attr,
+			     char *buf)
 {
 	/* Get the POST error code of previous boot failure. */
-	int value = hp_wmi_post_code_state();
+	int value = hp_wmi_read_int(HPWMI_POSTCODEERROR_QUERY);
+
 	if (value < 0)
-		return -EINVAL;
+		return value;
 	return sprintf(buf, "0x%x\n", value);
 }
 
-static ssize_t set_als(struct device *dev, struct device_attribute *attr,
-		       const char *buf, size_t count)
+static ssize_t als_store(struct device *dev, struct device_attribute *attr,
+			 const char *buf, size_t count)
 {
-	u32 tmp = simple_strtoul(buf, NULL, 10);
-	int ret = hp_wmi_perform_query(HPWMI_ALS_QUERY, 1, &tmp,
-				       sizeof(tmp), sizeof(tmp));
-	if (ret)
-		return -EINVAL;
-
-	return count;
-}
-
-static ssize_t set_postcode(struct device *dev, struct device_attribute *attr,
-		       const char *buf, size_t count)
-{
-	int ret;
 	u32 tmp;
-	long unsigned int tmp2;
+	int ret;
 
-	ret = kstrtoul(buf, 10, &tmp2);
-	if (ret || tmp2 != 1)
-		return -EINVAL;
-
-	/* Clear the POST error code. It is kept until until cleared. */
-	tmp = (u32) tmp2;
-	ret = hp_wmi_perform_query(HPWMI_POSTCODEERROR_QUERY, 1, &tmp,
-				       sizeof(tmp), sizeof(tmp));
+	ret = kstrtou32(buf, 10, &tmp);
 	if (ret)
-		return -EINVAL;
+		return ret;
+
+	ret = hp_wmi_perform_query(HPWMI_ALS_QUERY, HPWMI_WRITE, &tmp,
+				       sizeof(tmp), 0);
+	if (ret)
+		return ret < 0 ? ret : -EINVAL;
 
 	return count;
 }
 
-static DEVICE_ATTR(display, S_IRUGO, show_display, NULL);
-static DEVICE_ATTR(hddtemp, S_IRUGO, show_hddtemp, NULL);
-static DEVICE_ATTR(als, S_IRUGO | S_IWUSR, show_als, set_als);
-static DEVICE_ATTR(dock, S_IRUGO, show_dock, NULL);
-static DEVICE_ATTR(tablet, S_IRUGO, show_tablet, NULL);
-static DEVICE_ATTR(postcode, S_IRUGO | S_IWUSR, show_postcode, set_postcode);
+static ssize_t postcode_store(struct device *dev, struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	u32 tmp = 1;
+	bool clear;
+	int ret;
+
+	ret = kstrtobool(buf, &clear);
+	if (ret)
+		return ret;
+
+	if (clear == false)
+		return -EINVAL;
+
+	/* Clear the POST error code. It is kept until cleared. */
+	ret = hp_wmi_perform_query(HPWMI_POSTCODEERROR_QUERY, HPWMI_WRITE, &tmp,
+				       sizeof(tmp), 0);
+	if (ret)
+		return ret < 0 ? ret : -EINVAL;
+
+	return count;
+}
+
+static DEVICE_ATTR_RO(display);
+static DEVICE_ATTR_RO(hddtemp);
+static DEVICE_ATTR_RW(als);
+static DEVICE_ATTR_RO(dock);
+static DEVICE_ATTR_RO(tablet);
+static DEVICE_ATTR_RW(postcode);
+
+static struct attribute *hp_wmi_attrs[] = {
+	&dev_attr_display.attr,
+	&dev_attr_hddtemp.attr,
+	&dev_attr_als.attr,
+	&dev_attr_dock.attr,
+	&dev_attr_tablet.attr,
+	&dev_attr_postcode.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(hp_wmi);
 
 static void hp_wmi_notify(u32 value, void *context)
 {
 	struct acpi_buffer response = { ACPI_ALLOCATE_BUFFER, NULL };
-	union acpi_object *obj;
 	u32 event_id, event_data;
-	int key_code = 0, ret;
-	u32 *location;
+	union acpi_object *obj;
 	acpi_status status;
+	u32 *location;
+	int key_code;
 
 	status = wmi_get_event_data(value, &response);
 	if (status != AE_OK) {
@@ -572,10 +797,12 @@ static void hp_wmi_notify(u32 value, void *context)
 
 	switch (event_id) {
 	case HPWMI_DOCK_EVENT:
-		input_report_switch(hp_wmi_input_dev, SW_DOCK,
-				    hp_wmi_dock_state());
-		input_report_switch(hp_wmi_input_dev, SW_TABLET_MODE,
-				    hp_wmi_tablet_state());
+		if (test_bit(SW_DOCK, hp_wmi_input_dev->swbit))
+			input_report_switch(hp_wmi_input_dev, SW_DOCK,
+					    hp_wmi_get_dock_state());
+		if (test_bit(SW_TABLET_MODE, hp_wmi_input_dev->swbit))
+			input_report_switch(hp_wmi_input_dev, SW_TABLET_MODE,
+					    hp_wmi_get_tablet_mode());
 		input_sync(hp_wmi_input_dev);
 		break;
 	case HPWMI_PARK_HDD:
@@ -583,11 +810,8 @@ static void hp_wmi_notify(u32 value, void *context)
 	case HPWMI_SMART_ADAPTER:
 		break;
 	case HPWMI_BEZEL_BUTTON:
-		ret = hp_wmi_perform_query(HPWMI_HOTKEY_QUERY, 0,
-					   &key_code,
-					   sizeof(key_code),
-					   sizeof(key_code));
-		if (ret)
+		key_code = hp_wmi_read_int(HPWMI_HOTKEY_QUERY);
+		if (key_code < 0)
 			break;
 
 		if (!sparse_keymap_report_event(hp_wmi_input_dev,
@@ -634,6 +858,10 @@ static void hp_wmi_notify(u32 value, void *context)
 		break;
 	case HPWMI_BATTERY_CHARGE_PERIOD:
 		break;
+	case HPWMI_SANITIZATION_MODE:
+		break;
+	case HPWMI_SMART_EXPERIENCE_APP:
+		break;
 	default:
 		pr_info("Unknown event_id - %d - 0x%x\n", event_id, event_data);
 		break;
@@ -643,7 +871,7 @@ static void hp_wmi_notify(u32 value, void *context)
 static int __init hp_wmi_input_setup(void)
 {
 	acpi_status status;
-	int err;
+	int err, val;
 
 	hp_wmi_input_dev = input_allocate_device();
 	if (!hp_wmi_input_dev)
@@ -654,17 +882,26 @@ static int __init hp_wmi_input_setup(void)
 	hp_wmi_input_dev->id.bustype = BUS_HOST;
 
 	__set_bit(EV_SW, hp_wmi_input_dev->evbit);
-	__set_bit(SW_DOCK, hp_wmi_input_dev->swbit);
-	__set_bit(SW_TABLET_MODE, hp_wmi_input_dev->swbit);
+
+	/* Dock */
+	val = hp_wmi_get_dock_state();
+	if (!(val < 0)) {
+		__set_bit(SW_DOCK, hp_wmi_input_dev->swbit);
+		input_report_switch(hp_wmi_input_dev, SW_DOCK, val);
+	}
+
+	/* Tablet mode */
+	val = hp_wmi_get_tablet_mode();
+	if (!(val < 0)) {
+		__set_bit(SW_TABLET_MODE, hp_wmi_input_dev->swbit);
+		input_report_switch(hp_wmi_input_dev, SW_TABLET_MODE, val);
+	}
 
 	err = sparse_keymap_setup(hp_wmi_input_dev, hp_wmi_keymap, NULL);
 	if (err)
 		goto err_free_dev;
 
 	/* Set initial hardware state */
-	input_report_switch(hp_wmi_input_dev, SW_DOCK, hp_wmi_dock_state());
-	input_report_switch(hp_wmi_input_dev, SW_TABLET_MODE,
-			    hp_wmi_tablet_state());
 	input_sync(hp_wmi_input_dev);
 
 	if (!hp_wmi_bios_2009_later() && hp_wmi_bios_2008_later())
@@ -673,7 +910,7 @@ static int __init hp_wmi_input_setup(void)
 	status = wmi_install_notify_handler(HPWMI_EVENT_GUID, hp_wmi_notify, NULL);
 	if (ACPI_FAILURE(status)) {
 		err = -EIO;
-		goto err_free_keymap;
+		goto err_free_dev;
 	}
 
 	err = input_register_device(hp_wmi_input_dev);
@@ -684,8 +921,6 @@ static int __init hp_wmi_input_setup(void)
 
  err_uninstall_notifier:
 	wmi_remove_notify_handler(HPWMI_EVENT_GUID);
- err_free_keymap:
-	sparse_keymap_free(hp_wmi_input_dev);
  err_free_dev:
 	input_free_device(hp_wmi_input_dev);
 	return err;
@@ -694,31 +929,18 @@ static int __init hp_wmi_input_setup(void)
 static void hp_wmi_input_destroy(void)
 {
 	wmi_remove_notify_handler(HPWMI_EVENT_GUID);
-	sparse_keymap_free(hp_wmi_input_dev);
 	input_unregister_device(hp_wmi_input_dev);
-}
-
-static void cleanup_sysfs(struct platform_device *device)
-{
-	device_remove_file(&device->dev, &dev_attr_display);
-	device_remove_file(&device->dev, &dev_attr_hddtemp);
-	device_remove_file(&device->dev, &dev_attr_als);
-	device_remove_file(&device->dev, &dev_attr_dock);
-	device_remove_file(&device->dev, &dev_attr_tablet);
-	device_remove_file(&device->dev, &dev_attr_postcode);
 }
 
 static int __init hp_wmi_rfkill_setup(struct platform_device *device)
 {
-	int err;
-	int wireless = 0;
+	int err, wireless;
 
-	err = hp_wmi_perform_query(HPWMI_WIRELESS_QUERY, 0, &wireless,
-				   sizeof(wireless), sizeof(wireless));
-	if (err)
-		return err;
+	wireless = hp_wmi_read_int(HPWMI_WIRELESS_QUERY);
+	if (wireless < 0)
+		return wireless;
 
-	err = hp_wmi_perform_query(HPWMI_WIRELESS_QUERY, 1, &wireless,
+	err = hp_wmi_perform_query(HPWMI_WIRELESS_QUERY, HPWMI_WRITE, &wireless,
 				   sizeof(wireless), 0);
 	if (err)
 		return err;
@@ -795,12 +1017,13 @@ register_wifi_error:
 
 static int __init hp_wmi_rfkill2_setup(struct platform_device *device)
 {
-	int err, i;
 	struct bios_rfkill2_state state;
-	err = hp_wmi_perform_query(HPWMI_WIRELESS2_QUERY, 0, &state,
-				   0, sizeof(state));
+	int err, i;
+
+	err = hp_wmi_perform_query(HPWMI_WIRELESS2_QUERY, HPWMI_READ, &state,
+				   zero_if_sup(state), sizeof(state));
 	if (err)
-		return err;
+		return err < 0 ? err : -EINVAL;
 
 	if (state.count > HPWMI_MAX_RFKILL2_DEVICES) {
 		pr_warn("unable to parse 0x1b query output\n");
@@ -811,6 +1034,7 @@ static int __init hp_wmi_rfkill2_setup(struct platform_device *device)
 		struct rfkill *rfkill;
 		enum rfkill_type type;
 		char *name;
+
 		switch (state.device[i].radio_type) {
 		case HPWMI_WIFI:
 			type = RFKILL_TYPE_WLAN;
@@ -877,48 +1101,232 @@ fail:
 	return err;
 }
 
+static int platform_profile_omen_get(struct platform_profile_handler *pprof,
+				     enum platform_profile_option *profile)
+{
+	int tp;
+
+	tp = omen_thermal_profile_get();
+	if (tp < 0)
+		return tp;
+
+	switch (tp) {
+	case HP_OMEN_V0_THERMAL_PROFILE_PERFORMANCE:
+	case HP_OMEN_V1_THERMAL_PROFILE_PERFORMANCE:
+		*profile = PLATFORM_PROFILE_PERFORMANCE;
+		break;
+	case HP_OMEN_V0_THERMAL_PROFILE_DEFAULT:
+	case HP_OMEN_V1_THERMAL_PROFILE_DEFAULT:
+		*profile = PLATFORM_PROFILE_BALANCED;
+		break;
+	case HP_OMEN_V0_THERMAL_PROFILE_COOL:
+	case HP_OMEN_V1_THERMAL_PROFILE_COOL:
+		*profile = PLATFORM_PROFILE_COOL;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int platform_profile_omen_set(struct platform_profile_handler *pprof,
+				     enum platform_profile_option profile)
+{
+	int err, tp, tp_version;
+
+	tp_version = omen_get_thermal_policy_version();
+
+	if (tp_version < 0 || tp_version > 1)
+		return -EOPNOTSUPP;
+
+	switch (profile) {
+	case PLATFORM_PROFILE_PERFORMANCE:
+		if (tp_version == 0)
+			tp = HP_OMEN_V0_THERMAL_PROFILE_PERFORMANCE;
+		else
+			tp = HP_OMEN_V1_THERMAL_PROFILE_PERFORMANCE;
+		break;
+	case PLATFORM_PROFILE_BALANCED:
+		if (tp_version == 0)
+			tp = HP_OMEN_V0_THERMAL_PROFILE_DEFAULT;
+		else
+			tp = HP_OMEN_V1_THERMAL_PROFILE_DEFAULT;
+		break;
+	case PLATFORM_PROFILE_COOL:
+		if (tp_version == 0)
+			tp = HP_OMEN_V0_THERMAL_PROFILE_COOL;
+		else
+			tp = HP_OMEN_V1_THERMAL_PROFILE_COOL;
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	err = omen_thermal_profile_set(tp);
+	if (err < 0)
+		return err;
+
+	return 0;
+}
+
+static int thermal_profile_get(void)
+{
+	return hp_wmi_read_int(HPWMI_THERMAL_PROFILE_QUERY);
+}
+
+static int thermal_profile_set(int thermal_profile)
+{
+	return hp_wmi_perform_query(HPWMI_THERMAL_PROFILE_QUERY, HPWMI_WRITE, &thermal_profile,
+							   sizeof(thermal_profile), 0);
+}
+
+static int hp_wmi_platform_profile_get(struct platform_profile_handler *pprof,
+					enum platform_profile_option *profile)
+{
+	int tp;
+
+	tp = thermal_profile_get();
+	if (tp < 0)
+		return tp;
+
+	switch (tp) {
+	case HP_THERMAL_PROFILE_PERFORMANCE:
+		*profile =  PLATFORM_PROFILE_PERFORMANCE;
+		break;
+	case HP_THERMAL_PROFILE_DEFAULT:
+		*profile =  PLATFORM_PROFILE_BALANCED;
+		break;
+	case HP_THERMAL_PROFILE_COOL:
+		*profile =  PLATFORM_PROFILE_COOL;
+		break;
+	case HP_THERMAL_PROFILE_QUIET:
+		*profile = PLATFORM_PROFILE_QUIET;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int hp_wmi_platform_profile_set(struct platform_profile_handler *pprof,
+					enum platform_profile_option profile)
+{
+	int err, tp;
+
+	switch (profile) {
+	case PLATFORM_PROFILE_PERFORMANCE:
+		tp =  HP_THERMAL_PROFILE_PERFORMANCE;
+		break;
+	case PLATFORM_PROFILE_BALANCED:
+		tp =  HP_THERMAL_PROFILE_DEFAULT;
+		break;
+	case PLATFORM_PROFILE_COOL:
+		tp =  HP_THERMAL_PROFILE_COOL;
+		break;
+	case PLATFORM_PROFILE_QUIET:
+		tp = HP_THERMAL_PROFILE_QUIET;
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	err = thermal_profile_set(tp);
+	if (err)
+		return err;
+
+	return 0;
+}
+
+static int thermal_profile_setup(void)
+{
+	int err, tp;
+
+	if (is_omen_thermal_profile()) {
+		tp = omen_thermal_profile_get();
+		if (tp < 0)
+			return tp;
+
+		/*
+		 * call thermal profile write command to ensure that the
+		 * firmware correctly sets the OEM variables
+		 */
+
+		err = omen_thermal_profile_set(tp);
+		if (err < 0)
+			return err;
+
+		platform_profile_handler.profile_get = platform_profile_omen_get;
+		platform_profile_handler.profile_set = platform_profile_omen_set;
+	} else {
+		tp = thermal_profile_get();
+
+		if (tp < 0)
+			return tp;
+
+		/*
+		 * call thermal profile write command to ensure that the
+		 * firmware correctly sets the OEM variables for the DPTF
+		 */
+		err = thermal_profile_set(tp);
+		if (err)
+			return err;
+
+		platform_profile_handler.profile_get = hp_wmi_platform_profile_get;
+		platform_profile_handler.profile_set = hp_wmi_platform_profile_set;
+
+		set_bit(PLATFORM_PROFILE_QUIET, platform_profile_handler.choices);
+	}
+
+	set_bit(PLATFORM_PROFILE_COOL, platform_profile_handler.choices);
+	set_bit(PLATFORM_PROFILE_BALANCED, platform_profile_handler.choices);
+	set_bit(PLATFORM_PROFILE_PERFORMANCE, platform_profile_handler.choices);
+
+	err = platform_profile_register(&platform_profile_handler);
+	if (err)
+		return err;
+
+	platform_profile_support = true;
+
+	return 0;
+}
+
+static int hp_wmi_hwmon_init(void);
+
 static int __init hp_wmi_bios_setup(struct platform_device *device)
 {
 	int err;
-
 	/* clear detected rfkill devices */
 	wifi_rfkill = NULL;
 	bluetooth_rfkill = NULL;
 	wwan_rfkill = NULL;
 	rfkill2_count = 0;
 
-	if (hp_wmi_rfkill_setup(device))
-		hp_wmi_rfkill2_setup(device);
+	/*
+	 * In pre-2009 BIOS, command 1Bh return 0x4 to indicate that
+	 * BIOS no longer controls the power for the wireless
+	 * devices. All features supported by this command will no
+	 * longer be supported.
+	 */
+	if (!hp_wmi_bios_2009_later()) {
+		if (hp_wmi_rfkill_setup(device))
+			hp_wmi_rfkill2_setup(device);
+	}
 
-	err = device_create_file(&device->dev, &dev_attr_display);
-	if (err)
-		goto add_sysfs_error;
-	err = device_create_file(&device->dev, &dev_attr_hddtemp);
-	if (err)
-		goto add_sysfs_error;
-	err = device_create_file(&device->dev, &dev_attr_als);
-	if (err)
-		goto add_sysfs_error;
-	err = device_create_file(&device->dev, &dev_attr_dock);
-	if (err)
-		goto add_sysfs_error;
-	err = device_create_file(&device->dev, &dev_attr_tablet);
-	if (err)
-		goto add_sysfs_error;
-	err = device_create_file(&device->dev, &dev_attr_postcode);
-	if (err)
-		goto add_sysfs_error;
+	err = hp_wmi_hwmon_init();
+
+	if (err < 0)
+		return err;
+
+	thermal_profile_setup();
+
 	return 0;
-
-add_sysfs_error:
-	cleanup_sysfs(device);
-	return err;
 }
 
 static int __exit hp_wmi_bios_remove(struct platform_device *device)
 {
 	int i;
-	cleanup_sysfs(device);
 
 	for (i = 0; i < rfkill2_count; i++) {
 		rfkill_unregister(rfkill2[i].rfkill);
@@ -938,6 +1346,9 @@ static int __exit hp_wmi_bios_remove(struct platform_device *device)
 		rfkill_destroy(wwan_rfkill);
 	}
 
+	if (platform_profile_support)
+		platform_profile_remove();
+
 	return 0;
 }
 
@@ -950,10 +1361,12 @@ static int hp_wmi_resume_handler(struct device *device)
 	 * changed.
 	 */
 	if (hp_wmi_input_dev) {
-		input_report_switch(hp_wmi_input_dev, SW_DOCK,
-				    hp_wmi_dock_state());
-		input_report_switch(hp_wmi_input_dev, SW_TABLET_MODE,
-				    hp_wmi_tablet_state());
+		if (test_bit(SW_DOCK, hp_wmi_input_dev->swbit))
+			input_report_switch(hp_wmi_input_dev, SW_DOCK,
+					    hp_wmi_get_dock_state());
+		if (test_bit(SW_TABLET_MODE, hp_wmi_input_dev->swbit))
+			input_report_switch(hp_wmi_input_dev, SW_TABLET_MODE,
+					    hp_wmi_get_tablet_mode());
 		input_sync(hp_wmi_input_dev);
 	}
 
@@ -985,18 +1398,129 @@ static struct platform_driver hp_wmi_driver = {
 	.driver = {
 		.name = "hp-wmi",
 		.pm = &hp_wmi_pm_ops,
+		.dev_groups = hp_wmi_groups,
 	},
 	.remove = __exit_p(hp_wmi_bios_remove),
 };
 
+static umode_t hp_wmi_hwmon_is_visible(const void *data,
+				       enum hwmon_sensor_types type,
+				       u32 attr, int channel)
+{
+	switch (type) {
+	case hwmon_pwm:
+		return 0644;
+	case hwmon_fan:
+		if (hp_wmi_get_fan_speed(channel) >= 0)
+			return 0444;
+		break;
+	default:
+		return 0;
+	}
+
+	return 0;
+}
+
+static int hp_wmi_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
+			     u32 attr, int channel, long *val)
+{
+	int ret;
+
+	switch (type) {
+	case hwmon_fan:
+		ret = hp_wmi_get_fan_speed(channel);
+
+		if (ret < 0)
+			return ret;
+		*val = ret;
+		return 0;
+	case hwmon_pwm:
+		switch (hp_wmi_fan_speed_max_get()) {
+		case 0:
+			/* 0 is automatic fan, which is 2 for hwmon */
+			*val = 2;
+			return 0;
+		case 1:
+			/* 1 is max fan, which is 0
+			 * (no fan speed control) for hwmon
+			 */
+			*val = 0;
+			return 0;
+		default:
+			/* shouldn't happen */
+			return -ENODATA;
+		}
+	default:
+		return -EINVAL;
+	}
+}
+
+static int hp_wmi_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
+			      u32 attr, int channel, long val)
+{
+	switch (type) {
+	case hwmon_pwm:
+		switch (val) {
+		case 0:
+			/* 0 is no fan speed control (max), which is 1 for us */
+			return hp_wmi_fan_speed_max_set(1);
+		case 2:
+			/* 2 is automatic speed control, which is 0 for us */
+			return hp_wmi_fan_speed_max_set(0);
+		default:
+			/* we don't support manual fan speed control */
+			return -EINVAL;
+		}
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static const struct hwmon_channel_info *info[] = {
+	HWMON_CHANNEL_INFO(fan, HWMON_F_INPUT, HWMON_F_INPUT),
+	HWMON_CHANNEL_INFO(pwm, HWMON_PWM_ENABLE),
+	NULL
+};
+
+static const struct hwmon_ops ops = {
+	.is_visible = hp_wmi_hwmon_is_visible,
+	.read = hp_wmi_hwmon_read,
+	.write = hp_wmi_hwmon_write,
+};
+
+static const struct hwmon_chip_info chip_info = {
+	.ops = &ops,
+	.info = info,
+};
+
+static int hp_wmi_hwmon_init(void)
+{
+	struct device *dev = &hp_wmi_platform_dev->dev;
+	struct device *hwmon;
+
+	hwmon = devm_hwmon_device_register_with_info(dev, "hp", &hp_wmi_driver,
+						     &chip_info, NULL);
+
+	if (IS_ERR(hwmon)) {
+		dev_err(dev, "Could not register hp hwmon device\n");
+		return PTR_ERR(hwmon);
+	}
+
+	return 0;
+}
+
 static int __init hp_wmi_init(void)
 {
-	int err;
 	int event_capable = wmi_has_guid(HPWMI_EVENT_GUID);
 	int bios_capable = wmi_has_guid(HPWMI_BIOS_GUID);
+	int err, tmp = 0;
 
 	if (!bios_capable && !event_capable)
 		return -ENODEV;
+
+	if (hp_wmi_perform_query(HPWMI_HARDWARE_QUERY, HPWMI_READ, &tmp,
+				 sizeof(tmp), sizeof(tmp)) == HPWMI_RET_INVALID_PARAMETERS)
+		zero_insize_support = true;
 
 	if (event_capable) {
 		err = hp_wmi_input_setup();
@@ -1006,7 +1530,7 @@ static int __init hp_wmi_init(void)
 
 	if (bios_capable) {
 		hp_wmi_platform_dev =
-			platform_device_register_simple("hp-wmi", -1, NULL, 0);
+			platform_device_register_simple("hp-wmi", PLATFORM_DEVID_NONE, NULL, 0);
 		if (IS_ERR(hp_wmi_platform_dev)) {
 			err = PTR_ERR(hp_wmi_platform_dev);
 			goto err_destroy_input;
